@@ -1,0 +1,167 @@
+"""The SAS functions."""
+
+# Author: Peishi Jiang
+# Email: shixijps@gmail.com
+
+import jax
+import jax.numpy as jnp
+import equinox as eqx
+from equinox.nn import MLP, Linear
+
+from jaxtyping import PyTree, Array
+from typing import Callable
+
+
+# The base class
+class SASBase(eqx.Module):
+    loc: Array
+    scale: Array
+    
+    def __init__(self, loc=0.0, scale=1.0):
+        self.loc = jnp.array(loc)
+        self.scale = jnp.array(scale)
+    
+    def pdf(self, Si, x):
+        # Return PDF
+        raise Exception('Not implemented')
+    
+    def __call__(self, Si, x):
+        # Return CDF:
+        raise Exception('Not implemented')
+
+
+# The null class
+class SAS_null(SASBase):
+    loc: Array
+    scale: Array
+    
+    def pdf(self, Si, x):
+        # Return PDF
+        return 0.
+    
+    def __call__(self, Si, x):
+        # Return CDF:
+        return 0.
+
+
+# Gamme distribution
+class SAS_Gamma(SASBase):
+    a: Array
+    
+    def __init__(self, a, loc=0.0, scale=1.0):
+        super().__init__(loc, scale)
+        self.a = jnp.array(a)
+    
+    def pdf(self, Si, x=None):
+        a, loc, scale = self.a, self.loc, self.scale
+        y = (Si - loc) / scale
+        # TODO: the minimum scaled y is needed to avoid
+        # the FloatingPointError in jit operations!
+        y = jax.lax.max(1e-20, y)
+        return jax.scipy.stats.gamma.pdf(y, a, loc=0., scale=1.)
+    
+    def __call__(self, Si, x=None):
+        a, loc, scale = self.a, self.loc, self.scale
+        y = (Si - loc) / scale
+        y = jax.lax.max(1e-20, y)
+        return jax.scipy.stats.gamma.cdf(y, a, loc=0., scale=1.)
+
+
+# Beta distribution
+class SAS_Beta(SASBase):
+    a: Array
+    b: Array
+    
+    def __init__(self, a, b, loc=0.0, scale=1.0):
+        super().__init__(loc, scale)
+        self.a, self.b = jnp.array(a), jnp.array(b)
+    
+    def pdf(self, Si, x=None):
+        a, b, loc, scale = self.a, self.b, self.loc, self.scale
+        return jax.scipy.stats.beta.pdf(Si, a, b, loc, scale)
+    
+    def __call__(self, Si, x=None):
+        a, b, loc, scale = self.a, self.b, self.loc, self.scale
+        return jax.scipy.stats.beta.cdf(Si, a, b, loc, scale)
+
+
+# Kumaraswamy distribution 
+class SAS_Kumaraswamy(SASBase):
+    a: Array
+    b: Array
+    
+    def __init__(self, a, b, loc=0.0, scale=1.0):
+        super().__init__(loc, scale)
+        self.a, self.b = jnp.array(a), jnp.array(b)
+    
+    def pdf(self, Si, x=None):
+        a, b, loc, scale = self.a, self.b, self.loc, self.scale
+        y = (Si - loc) / scale
+        y = jax.lax.min(jax.lax.max(0., y), 1.)
+        return a * b * y ** (a-1) * (1-y**a) ** (b-1)
+    
+    def __call__(self, Si, x=None):
+        # Return CDF:
+        a, b, loc, scale = self.a, self.b, self.loc, self.scale
+        y = (Si - loc) / scale
+        y = jax.lax.min(jax.lax.max(0., y), 1.)
+        return 1. - (1. - y**a) ** b
+
+
+# Mixture density network
+# The code is modified from the following post: 
+# https://github.com/hardmaru/mdn_jax_tutorial/blob/master/mixture_density_networks_jax.ipynb
+class SAS_MDN(SASBase):
+    m: eqx.Module
+    m_α: eqx.Module
+    m_μ: eqx.Module
+    m_σ: eqx.Module
+    # pdf_func: Callable
+    # cdf_func: Callable
+    
+    def __init__(self, n_input, n_hidden, n_mixture, key, loc=0., scale=1., **mlp_kwargs):
+        super().__init__(loc, scale)
+        key1, key2, key3, key4 = jax.random.split(key,4)
+        
+        # MLP model for predicting the hidden states
+        # n_mlp_output = (n_output+2) * n_mixture
+        self.m = MLP(in_size=n_input, out_size=n_hidden, key=key1, **mlp_kwargs)
+        
+        # MLP model for predicting α, μ, and σ
+        self.m_α = Linear(in_features=n_hidden, out_features=n_mixture, key=key2)
+        self.m_μ = Linear(in_features=n_hidden, out_features=n_mixture, key=key3)
+        self.m_σ = Linear(in_features=n_hidden, out_features=n_mixture, key=key4)
+        
+        # # PDF function of mixture distributions 
+        # self.pdf_func = jax.scipy.stats.norm.pdf
+        
+        # # CDF function of mixture distributions 
+        # self.cdf_func = jax.scipy.stats.norm.cdf
+    
+    def get_param(self, x):
+        # Calculate the weights, mean, and standard deviation of the mixture distributions
+        z = self.m(x)  # shape: (n_hidden,)
+        z_α, z_μ, z_σ = self.m_α(z), self.m_μ(z), self.m_σ(z) # shape: (n_mixture,) (n_mixture,) (n_mixture)
+        
+        # The weights (n_mixture,)
+        α = jax.nn.softmax(z_α)
+        
+        # The mean (n_mixture,)
+        μ = z_μ
+        
+        # The standard deviation (n_mixture,)
+        σ = jnp.exp(z_σ)
+        
+        return α, μ, σ
+    
+    def pdf(self, Si, x):
+        y = (Si - self.loc) / self.scale
+        α, μ, σ = self.get_param(x)
+        pdfs = jax.vmap(jax.scipy.stats.norm.pdf, in_axes=(None,0,0))(y, μ, σ)
+        return jnp.sum(jnp.dot(α, pdfs))
+    
+    def __call__(self, Si, x):
+        y = (Si - self.loc) / self.scale
+        α, μ, σ = self.get_param(x)
+        cdfs = jax.vmap(jax.scipy.stats.norm.cdf, in_axes=(None,0,0))(y, μ, σ)
+        return jnp.sum(jnp.dot(α, cdfs))

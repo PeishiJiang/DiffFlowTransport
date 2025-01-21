@@ -1,0 +1,10 @@
+name: nn-flow-transport
+dependencies:
+  - numpy
+  - pandas
+  - scipy
+  - seaborn
+  - scikit-learn
+  - matplotlib
+  - ipykernel
+  - mesas

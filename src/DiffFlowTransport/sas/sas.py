@@ -8,8 +8,7 @@ import jax.numpy as jnp
 import equinox as eqx
 from equinox.nn import MLP, Linear
 
-from jaxtyping import PyTree, Array
-from typing import Callable
+from jaxtyping import Array
 
 
 # The base class
@@ -44,6 +43,34 @@ class SAS_null(SASBase):
         return 0.
 
 
+class SAS_Uniform(SASBase):
+    
+    def __init__(self, scale):
+        super().__init__(0.0, scale)
+
+    def pdf(self, Si, x=None):
+        loc, scale = self.loc, self.scale
+        return jax.scipy.stats.uniform.pdf(Si, loc=loc, scale=scale)
+    
+    def __call__(self, Si, x=None):
+        loc, scale = self.loc, self.scale
+        return jax.scipy.stats.uniform.cdf(Si, loc=loc, scale=scale)
+
+
+class SAS_Uniform_VaryingScale(SASBase):
+    
+    def __init__(self, scale):
+        super().__init__(0.0, scale)
+
+    def pdf(self, Si, x=1.0):
+        loc, scale = self.loc, jnp.array(x)
+        return jax.scipy.stats.uniform.pdf(Si, loc=loc, scale=scale)
+    
+    def __call__(self, Si, x=1.0):
+        loc, scale = self.loc, jnp.array(x)
+        return jax.scipy.stats.uniform.cdf(Si, loc=loc, scale=scale)
+
+
 # Gamme distribution
 class SAS_Gamma(SASBase):
     a: Array
@@ -64,6 +91,29 @@ class SAS_Gamma(SASBase):
         a, loc, scale = self.a, self.loc, self.scale
         y = (Si - loc) / scale
         y = jax.lax.max(1e-20, y)
+        return jax.scipy.stats.gamma.cdf(y, a, loc=0., scale=1.)
+
+
+class SAS_Gamma_VaryingScale(SASBase):
+    a: Array
+    
+    def __init__(self, a, loc=0.0, scale=1.0):
+        super().__init__(loc, scale)
+        self.a = jnp.array(a)
+    
+    def pdf(self, Si, x=1.0):
+        a, loc, scale = self.a, self.loc, jnp.array(x)
+        y = (Si - loc) / scale
+        # TODO: the minimum scaled y is needed to avoid
+        # the FloatingPointError in jit operations!
+        y = jax.lax.max(1e-20, y)
+        return jax.scipy.stats.gamma.pdf(y, a, loc=0., scale=1.)
+    
+    def __call__(self, Si, x=1.0):
+        a, loc, scale = self.a, self.loc, jnp.array(x)
+        y = (Si - loc) / scale
+        y = jax.lax.max(1e-20, y)
+        # print(scale.shape, x.shape, x.flatten().shape, Si.shape, y.shape)
         return jax.scipy.stats.gamma.cdf(y, a, loc=0., scale=1.)
 
 

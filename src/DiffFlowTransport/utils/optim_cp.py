@@ -3,14 +3,14 @@
 # Author: Peishi Jiang
 # Email: shixijps@gmail.com
 
-import logging
+from torch.utils.data import DataLoader
 
 import jax.numpy as jnp
 import optax
 import equinox as eqx
 from tqdm import tqdm
 
-from typing import Optional, Callable, Tuple, List
+from typing import Optional, Callable, Tuple
 from jaxtyping import Array, PyTree
 
 
@@ -18,11 +18,8 @@ def train(
     model: eqx.Module, filter_model_spec: eqx.Module,
     nsteps:int, loss_func: Callable, 
     optim: optax.GradientTransformation, 
-    x: List,
-    y: Array,
-    x_test: Optional[List] = None,
-    y_test: Optional[Array] = None,
-    **model_args,
+    trainloader: DataLoader, testloader: Optional[DataLoader]=None,
+    *model_args,
 ) -> Tuple[eqx.Module, Array, Array]:
     """Function to train one model/mapping.
 
@@ -42,48 +39,61 @@ def train(
     """
     opt_state = optim.init(eqx.filter(model, eqx.is_array))
 
-    ymask = ~jnp.isnan(y)
-    ymask_test = ~jnp.isnan(y_test) if x_test is not None else None
-
     loss_train_set, loss_test_set = [], []
     for step in tqdm(range(nsteps)):
         # Update the model on the training data
-        model, opt_state, loss_value_train = make_step(
-            model, filter_model_spec, x, y, ymask, loss_func, optim, opt_state, **model_args
+        model, opt_state, loss_value_train = train_each_step(
+            model, filter_model_spec, trainloader, loss_func, optim, opt_state, *model_args
         )
 
-        logging.info(f"The loss of step {step}: {loss_value_train}")
-
         # Evaluate the model on the test data
-        if x_test is not None:
-            loss_value_test = evaluate(model, x_test, y_test, ymask_test, loss_func)
+        if testloader is not None:
+            loss_value_test = evaluate(model, testloader, loss_func)
             loss_train_set.append(loss_value_train)
             loss_test_set.append(loss_value_test)
         else:
             loss_train_set.append(loss_value_train)
 
     loss_train_set = jnp.array(loss_train_set)
-    loss_test_set = jnp.array(loss_test_set) if x_test is not None else None
+    loss_test_set = jnp.array(loss_test_set) if testloader is not None else None
     
     return model, loss_train_set, loss_test_set
+
+
+# @eqx.filter_jit
+def train_each_step(
+    model: eqx.Module, filter_model_spec: eqx.Module,
+    trainloader: DataLoader, loss_func: Callable,
+    optim: optax.GradientTransformation, opt_state: PyTree,
+    *model_args
+):
+    train_loss, k = 0, 0
+    for i, (x, y) in enumerate(trainloader):
+        x, y = jnp.array(x), jnp.array(y)
+        model, opt_state, train_loss_each = make_step(
+            model, filter_model_spec, opt_state, x, y, loss_func, optim, *model_args
+        )
+        k += 1
+        train_loss += train_loss_each
+    train_loss /= k
+    return model, opt_state, train_loss
 
 
 @eqx.filter_jit
 def make_step(
     model: eqx.Module,
     filter_model_spec: eqx.Module,
+    opt_state: PyTree,
     x: Array,
     y: Array,
-    ymask: Array,
     loss_func: Callable,
     optim: optax.GradientTransformation,
-    opt_state: PyTree,
-    **model_args,
+    *args,
 ):
     diff_model, static_model = eqx.partition(model, filter_model_spec)
     # loss_value, grads = eqx.filter_value_and_grad(loss_func_optim)(model, x, y)
     loss_value, grads = loss_func_optim(
-            diff_model, static_model, x, y, ymask, loss_func, **model_args
+            diff_model, static_model, x, y, loss_func, *args
     )
     updates, opt_state = optim.update(grads, opt_state, model)
     model = eqx.apply_updates(model, updates)
@@ -96,9 +106,8 @@ def loss_func_optim(
     static_model: eqx.Module,
     x: Array,
     y: Array,
-    ymask: Array,
     loss_func: Callable,
-    **model_args,
+    *model_args,
 ):
     """Calculating the gradient with respect to diff_model.
        Note that diff_model and static_model has the same type and
@@ -106,14 +115,18 @@ def loss_func_optim(
        https://docs.kidger.site/equinox/examples/frozen_layer/.
     """
     model = eqx.combine(diff_model, static_model)
-    pred_y = model(*x, **model_args)
-    # return loss_func(y[ymask], pred_y[ymask])
+    pred_y = model(x, *model_args)
     return loss_func(y, pred_y)
 
 
-def evaluate(model: eqx.Module, x: Array, y: Array, ymask: Array, 
-             loss_func: Callable, *model_args):
+def evaluate(model: eqx.Module, testloader: DataLoader, loss_func: Callable, *model_args):
+    test_loss, k = 0, 0
     loss_func = eqx.filter_jit(loss_func)
-    pred_y = model(*x, *model_args)
-    # return loss_func(y[ymask], pred_y[ymask])
-    return loss_func(y, pred_y)
+    for i, (x, y) in enumerate(testloader):
+        x, y = jnp.array(x), jnp.array(y)
+        pred_y = model(x, *model_args)
+        test_loss_each = loss_func(y, pred_y)
+        k += 1
+        test_loss += test_loss_each
+    test_loss /= k
+    return test_loss

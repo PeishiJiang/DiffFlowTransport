@@ -173,11 +173,13 @@ class SASTransport(eqx.Module):
     # ):
     #     pass
 
-    def get_CQ(self, J, C_J, Q, ET, sTmT_init, sas_Q_args, sas_ET_args):
+    def get_CQ(self, J, C_J, Q, ET, sTmT_init, sas_Q_args, sas_ET_args, mask=None):
         sT, mT, mQETs, pQETs, mRs, C_Q = self(
             J, C_J, Q, ET, sTmT_init, sas_Q_args, sas_ET_args
         )
-        return C_Q  # (nt, nm)
+        # Note: mask is used to mask out the C_Q where observations are not given.
+        mask = jnp.ones(C_Q.shape) if mask is None else mask
+        return C_Q[mask]  # (nt, nm)
 
 
 # Compute mQ -- mass loss with flow

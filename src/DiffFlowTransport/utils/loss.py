@@ -13,8 +13,8 @@ from jaxtyping import Array
 # Define a mean squared error function
 def mse(y: Array, pred_y: Array):
     """Function for calculating mean square error function"""
-    # return jnp.mean((y - pred_y) ** 2)
-    return jnp.nanmean((y - pred_y) ** 2)
+    return jnp.mean((y - pred_y) ** 2)
+    # return jnp.nanmean((y - pred_y) ** 2)
 
 
 # Define a relative mean squared error function

@@ -5,6 +5,7 @@
 
 import logging
 
+# import jax
 import jax.numpy as jnp
 import optax
 import equinox as eqx
@@ -42,21 +43,18 @@ def train(
     """
     opt_state = optim.init(eqx.filter(model, eqx.is_array))
 
-    ymask = ~jnp.isnan(y)
-    ymask_test = ~jnp.isnan(y_test) if x_test is not None else None
-
     loss_train_set, loss_test_set = [], []
     for step in tqdm(range(nsteps)):
         # Update the model on the training data
         model, opt_state, loss_value_train = make_step(
-            model, filter_model_spec, x, y, ymask, loss_func, optim, opt_state, **model_args
+            model, filter_model_spec, x, y, loss_func, optim, opt_state, **model_args
         )
 
         logging.info(f"The loss of step {step}: {loss_value_train}")
 
         # Evaluate the model on the test data
         if x_test is not None:
-            loss_value_test = evaluate(model, x_test, y_test, ymask_test, loss_func)
+            loss_value_test = evaluate(model, x_test, y_test, loss_func)
             loss_train_set.append(loss_value_train)
             loss_test_set.append(loss_value_test)
         else:
@@ -74,7 +72,6 @@ def make_step(
     filter_model_spec: eqx.Module,
     x: Array,
     y: Array,
-    ymask: Array,
     loss_func: Callable,
     optim: optax.GradientTransformation,
     opt_state: PyTree,
@@ -83,9 +80,12 @@ def make_step(
     diff_model, static_model = eqx.partition(model, filter_model_spec)
     # loss_value, grads = eqx.filter_value_and_grad(loss_func_optim)(model, x, y)
     loss_value, grads = loss_func_optim(
-            diff_model, static_model, x, y, ymask, loss_func, **model_args
+            diff_model, static_model, x, y, loss_func, **model_args
     )
     updates, opt_state = optim.update(grads, opt_state, model)
+    # jax.debug.print("a update: {x}", x=updates.__self__.sas_Q.a)
+    # jax.debug.print("a grad: {x}", x=grads.__self__.sas_Q.a)
+    # jax.debug.print("loss_value: {x}", x=loss_value)
     model = eqx.apply_updates(model, updates)
     return model, opt_state, loss_value
 
@@ -96,7 +96,6 @@ def loss_func_optim(
     static_model: eqx.Module,
     x: Array,
     y: Array,
-    ymask: Array,
     loss_func: Callable,
     **model_args,
 ):
@@ -111,7 +110,7 @@ def loss_func_optim(
     return loss_func(y, pred_y)
 
 
-def evaluate(model: eqx.Module, x: Array, y: Array, ymask: Array, 
+def evaluate(model: eqx.Module, x: Array, y: Array,
              loss_func: Callable, *model_args):
     loss_func = eqx.filter_jit(loss_func)
     pred_y = model(*x, *model_args)

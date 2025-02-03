@@ -1,4 +1,4 @@
-"""Functions for training."""
+"""Functions for training a model without dataloader."""
 
 # Author: Peishi Jiang
 # Email: shixijps@gmail.com

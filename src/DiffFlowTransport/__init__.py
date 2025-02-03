@@ -1,4 +1,4 @@
-from .transport import SASTransport
+# from .transport import SASTransport
 
 import logging
 logging.basicConfig(level=logging.INFO,

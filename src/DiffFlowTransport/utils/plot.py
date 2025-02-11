@@ -4,11 +4,13 @@
 # Email: shixijps@gmail.com
 
 import numpy as np
+import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 from .metrics import compute_metrics
 
@@ -140,3 +142,116 @@ def plot_timeseries_obs_1to1(
     plot_obs_1to1(obs, sim, lim, ax=ax2, s=2, varn="")
     # plt.subplots_adjust(hspace=0.9)
     return fig, ax1, ax2  # pyright: ignore
+
+
+def plot_PQET_ST(
+    J, Q, sT, pQETs, dt, timesteps, age_cut=1000,
+):
+    assert J.shape == Q.shape
+    assert len(J) == len(timesteps)
+    assert len(Q) == len(timesteps)
+    assert sT.shape[0] == pQETs.shape[0]
+    assert sT.shape[1] == len(timesteps)+1
+    assert pQETs.shape[1] == len(timesteps)
+
+    PQ = jnp.cumsum(pQETs[...,0], axis=0) * dt
+    PET = jnp.cumsum(pQETs[...,1], axis=0) * dt
+    ST = jnp.cumsum(sT[:,1:], axis=0) * dt
+
+    fig, axes = plt.subplots(5, 1, figsize=(10,12), sharex=False)
+    ax = axes[0]
+    ax.plot(timesteps, J, 'k')
+    ax.set(title='$J$', ylabel='[mm/day]', xlim=[timesteps[0], timesteps[-1]], xticks=[])
+    # ax.set(xlim=[df.index[0], df.index[1]])
+
+    ax = axes[1]
+    ax.plot(timesteps, Q, 'k')
+    ax.set(title='$Q$', ylabel='[mm/day]', xlim=[timesteps[0], timesteps[-1]], xticks=[])
+
+    ax = axes[2]
+    im1=ax.imshow(ST[:age_cut], cmap='Blues', origin='lower', aspect='auto')
+    ax.set(ylabel='Age $T$ \n [days]', title='$S_T$', xticks=[])
+    cb_ax = fig.add_axes([.91,.124+0.32,.04,.1])
+    fig.colorbar(im1,orientation='vertical',cax=cb_ax)
+
+    ax = axes[3]
+    im2=ax.imshow(PQ[:age_cut], cmap='gist_stern', origin='lower', vmin=0., vmax=1., aspect='auto')
+    ax.set(ylabel='Age $T$ \n [days]', title='$P_Q$', xticks=[])
+    cb_ax = fig.add_axes([.91,.124+0.16,.04,.1])
+    fig.colorbar(im2,orientation='vertical',cax=cb_ax)
+
+    ax = axes[4]
+    im3=ax.imshow(PET[:age_cut], cmap='gist_stern', origin='lower', vmin=0., vmax=1., aspect='auto')
+    ax.set(ylabel='Age $T$ \n [days]', title='$P_{ET}$')
+    ax.set_xticks(np.arange(len(timesteps)))
+    ax.set_xticklabels(timesteps.strftime("%Y"), rotation=30, ha="right")
+    ax.xaxis.set_major_locator(mdates.YearLocator())
+    # plt.colorbar(im3, ax=ax)
+    cb_ax = fig.add_axes([.91,.124,.04,.1])
+    fig.colorbar(im3,orientation='vertical',cax=cb_ax)
+
+    return axes
+
+
+def plot_PQET_quantile(pQETs, dt, timesteps):
+
+    def quantile_from_cdf(cdf, quantile=0.5):
+        """
+        Compute the median from a discretized cumulative density function (CDF).
+        
+        Parameters:
+            x (numpy array): Sorted values corresponding to the CDF.
+            cdf (numpy array): 2D array of cumulative densities (each row is a different CDF).
+        
+        Returns:
+            numpy array: Estimated median values for each CDF.
+        """
+        # Find the first index where CDF >= 0.5 for each row
+        # idx = np.apply_along_axis(lambda row: np.searchsorted(row, quantile), axis=1, arr=cdf)
+        idx = jax.vmap(jnp.searchsorted, in_axes=(1, None))(cdf, quantile)
+
+        quantile_xs = idx
+
+        # # Initialize median array
+        # quantile_xs = []
+
+        # if x is None:
+        #     x = jnp.arange(cdf.shape[0])
+
+        # for i in range(cdf.shape[0]):  # Iterate over each CDF row
+        #     if idx[i] == 0:
+        #         quantile_x = x[0]  # If the first value already meets 0.5
+        #     elif cdf[i, idx[i]] == 0.5:
+        #         quantile_x = x[idx[i]]  # Exact match
+        #     else:
+        #         # Linear interpolation between x[idx-1] and x[idx]
+        #         x1, x2 = x[idx[i] - 1], x[idx[i]]
+        #         cdf1, cdf2 = cdf[i, idx[i] - 1], cdf[i, idx[i]]
+        #         quantile_x = x1 + (quantile - cdf1) / (cdf2 - cdf1) * (x2 - x1)
+        #     quantile_xs.append(quantile_x)
+
+        return jnp.array(quantile_xs)
+
+    PQ = jnp.cumsum(pQETs[...,0], axis=0) * dt
+    PET = jnp.cumsum(pQETs[...,1], axis=0) * dt
+
+    q1 = quantile_from_cdf(PQ, quantile=0.5) * dt
+    q2 = quantile_from_cdf(PQ, quantile=0.25) * dt
+    q3 = quantile_from_cdf(PQ, quantile=0.75) * dt
+
+    q1b = quantile_from_cdf(PET, quantile=0.5) * dt
+    q2b = quantile_from_cdf(PET, quantile=0.25) * dt
+    q3b = quantile_from_cdf(PET, quantile=0.75) * dt
+
+    fig, axes = plt.subplots(2, 1, figsize=(10,10), sharex=True)
+    ax = axes[0]
+    ax.fill_between(timesteps, q2, q3, color='blue', alpha=0.2)
+    ax.plot(timesteps, q1, 'tab:blue')
+    ax.set(title='Q age distribution', ylabel='Age [Days]')
+
+    ax = axes[1]
+    ax.fill_between(timesteps, q2b, q3b, color='blue', alpha=0.2)
+    ax.plot(timesteps, q1b, 'tab:blue')
+    ax.set(title='ET age distribution', ylabel='Age [Days]')
+
+    return axes

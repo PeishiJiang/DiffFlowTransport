@@ -9,6 +9,7 @@ import equinox as eqx
 from equinox.nn import MLP, Linear
 
 from jaxtyping import Array
+from typing import Dict
 
 
 # The base class
@@ -172,6 +173,7 @@ class SAS_NormalMDN(SASBase):
     
     def __init__(self, n_input, n_hidden, n_mixture, key, loc=0., scale=1., **mlp_kwargs):
         super().__init__(loc, scale)
+        key = jax.random.key(key)
         key1, key2, key3, key4, key5 = jax.random.split(key, 5)
         
         # MLP model for predicting the hidden states
@@ -235,6 +237,7 @@ class SAS_GammaMDN(SASBase):
     
     def __init__(self, n_input, n_hidden, n_mixture, key, loc=0., scale=1., **mlp_kwargs):
         super().__init__(loc, scale)
+        key = jax.random.key(key)
         key1, key2, key3, key4 = jax.random.split(key, 4)
         
         # MLP model for predicting the hidden states
@@ -283,3 +286,35 @@ class SAS_GammaMDN(SASBase):
         y = jax.lax.max(1e-20, y)
         cdfs = jax.vmap(jax.scipy.stats.gamma.cdf, in_axes=(None,0))(y, a)
         return jnp.sum(jnp.dot(α, cdfs))
+
+
+# TODO:
+def initialize_sas_model(sas_params: Dict):
+    model_type = sas_params['func']
+    model_params = sas_params['args']
+
+    if model_type.lower() == 'uniform':
+        model = SAS_Uniform
+
+    elif model_type.lower() == 'uniform_varyingscale':
+        model = SAS_Uniform_VaryingScale
+
+    elif model_type.lower() == 'gamma':
+        model = SAS_Gamma
+
+    elif model_type.lower() == 'gamma_varyingscale':
+        model = SAS_Gamma_VaryingScale
+
+    elif model_type.lower() == 'beta':
+        model = SAS_Beta
+
+    elif model_type.lower() == 'kumaraswamy':
+        model = SAS_Kumaraswamy
+
+    elif model_type.lower() == 'normalmdn':
+        model = SAS_NormalMDN
+
+    elif model_type.lower() == 'gammamdn':
+        model = SAS_GammaMDN
+
+    return model(**model_params)

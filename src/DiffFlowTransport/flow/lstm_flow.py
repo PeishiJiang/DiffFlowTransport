@@ -13,6 +13,8 @@ import equinox as eqx
 from equinox._module import field
 from equinox._misc import default_floating_dtype
 
+# from ..utils.scaler import BaseScaler
+
 import math
 from typing import Optional
 
@@ -96,25 +98,25 @@ class LSTM(eqx.Module):
     cell: eqx.Module
     linear: eqx.nn.Linear
 
-    def __init__(self, in_size, out_size, hidden_size, *, key):
-        ckey, lkey = jrandom.split(key)
-        self.hidden_size = hidden_size
-        self.cell = eqx.nn.LSTMCell(in_size, hidden_size, use_bias=False, key=ckey)
-        self.linear = eqx.nn.Linear(hidden_size, out_size, use_bias=True, key=lkey)
+    def __init__(self, n_input, n_output, n_hidden, *, key):
+        # TODO: look into why we need twice of random splitting!!!
+        key = jax.random.key(key)
+        ckey, lkey = jrandom.split(key, 2)
+        ckey, lkey = jrandom.split(ckey, 2)
+        # _, _, ckey, lkey = jrandom.split(key, 4)
+        self.hidden_size = n_hidden
+        self.cell = eqx.nn.LSTMCell(n_input, n_hidden, use_bias=False, key=ckey)
+        self.linear = eqx.nn.Linear(n_hidden, n_output, use_bias=True, key=lkey)
 
     def __call__(self, input):
-        init_state = (jnp.zeros(self.cell.hidden_size),
-                      jnp.zeros(self.cell.hidden_size))
-
-        def f(carry, inp):
-            h,c = self.cell(inp, carry)
-            return (h,c), (h,c)
-        states_t, states_all = jax.lax.scan(f, init_state, input)
-        
-        ht, ct = states_t
-        return jax.nn.relu(self.linear(ht))
+        ht, ct, output = self.calculate_all_states(input)
+        return output
     
-    def output_all(self, input):
+    def calculate_hidden_states(self, input):
+        ht, ct, output = self.calculate_all_states(input)
+        return ht
+
+    def calculate_all_states(self, input):
         init_state = (jnp.zeros(self.cell.hidden_size),
                       jnp.zeros(self.cell.hidden_size))
 
@@ -123,11 +125,48 @@ class LSTM(eqx.Module):
             return (h,c), (h,c)
         states_t, states_all = jax.lax.scan(f, init_state, input)
         
-        h_all, c_all = states_all
-        vmap = jax.vmap(lambda h: self.linear(h), in_axes=0)
-        h_trans_all = vmap(h_all)
-        c_trans_all = vmap(c_all)
-        # return h_trans_all, c_trans_all
         ht, ct = states_t
-        outh, outc = self.linear(ht), self.linear(ct)
-        return outh, outc, h_trans_all, c_trans_all
+        output = jax.nn.relu(self.linear(ht))
+        # jax.debug.print('ht: {x}', x=ht)
+        return ht, ct, output
+    
+    # def output_all(self, input):
+    #     init_state = (jnp.zeros(self.cell.hidden_size),
+    #                   jnp.zeros(self.cell.hidden_size))
+
+    #     def f(carry, inp):
+    #         h,c = self.cell(inp, carry)
+    #         return (h,c), (h,c)
+    #     states_t, states_all = jax.lax.scan(f, init_state, input)
+        
+    #     h_all, c_all = states_all
+    #     vmap = jax.vmap(lambda h: self.linear(h), in_axes=0)
+    #     h_trans_all = vmap(h_all)
+    #     c_trans_all = vmap(c_all)
+    #     # return h_trans_all, c_trans_all
+    #     ht, ct = states_t
+    #     outh, outc = self.linear(ht), self.linear(ct)
+    #     return outh, outc, h_trans_all, c_trans_all
+
+
+# class RNNFlow(eqx.Module):
+#     rnn: LSTM
+#     xscaler: BaseScaler
+#     yscaler: BaseScaler
+
+#     def __init__(self, xscaler, yscaler, **rnn_params):
+#         self.xscaler = xscaler
+#         self.yscaler = yscaler
+#         self.rnn = LSTM(**rnn_params)
+
+#     def __call__(self, input):
+#         input_scaled = self.xscaler.transform(input)
+#         output_scaled = self.rnn(input_scaled)
+#         output = self.yscaler.inverse_transform(output_scaled)
+#         return output
+    
+#     def calculate_all_states(self, input):
+#         input_scaled = self.xscaler.transform(input)
+#         ht, ct, output_scaled = self.rnn.calculate_all_states(input_scaled)
+#         output = self.yscaler.inverse_transform(output_scaled)
+#         return ht, ct, output

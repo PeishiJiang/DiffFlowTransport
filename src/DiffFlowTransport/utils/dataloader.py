@@ -13,23 +13,23 @@ from jaxtyping import Array
 
 class TimeSeriesDataset(Dataset):
 
-    def __init__(self, dataframe, target, features, sequence_length=5):
+    def __init__(self, dataframe, targets, features, sequence_length=5):
         """The Time series PyTorch dataset.
 
         Args:
             dataframe (pandas.DataFrame): The pandas dataframe
-            target (List): The target variable(s)
+            targets (List): The target variable(s)
             features (List): The input features
             sequence_length (int, optional): The lookback period. Defaults to 5.
         """
 
         # save which are the features and target data and sequence length
         self.features = features
-        self.target = target
+        self.targets = targets
         self.sequence_length = sequence_length
 
         # load data from dataframe into tensor
-        y = torch.tensor(dataframe[self.target].values).float()
+        y = torch.tensor(dataframe[self.targets].values).float()
         X = torch.tensor(dataframe[self.features].values).float()
 
         # remove padding from data and save data in class
@@ -60,12 +60,12 @@ class TimeSeriesDataset(Dataset):
 
 
 def make_pytorch_timeseries_dataloader(
-    dataframe, target, features, sequence_length,
+    dataframe, targets, features, sequence_length,
     batch_size=10, dl_seed=12, shuffle=True
 ):
     torch.manual_seed(dl_seed)
     dataset = TimeSeriesDataset(dataframe,
-                                target=[target],
+                                targets=targets,
                                 features=features,
                                 sequence_length=sequence_length)
     dataloader = DataLoader(

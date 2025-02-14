@@ -6,6 +6,7 @@
 import logging
 
 # import jax
+import jax.tree_util as jtu
 import jax.numpy as jnp
 import optax
 import equinox as eqx
@@ -13,6 +14,27 @@ from tqdm import tqdm
 
 from typing import Optional, Callable, Tuple, List
 from jaxtyping import Array, PyTree
+
+
+def train_transport_model(
+    model, epochs, loss_func, optim,
+    x_train, y_train, x_test, y_test
+):
+    # Get the filter_model_spec
+    # For now, we aim to train the sas function only
+    filter_model_spec = jtu.tree_map(lambda _: False, model)
+    sas_Q_filter = jtu.tree_map(lambda _: True, model.sas_Q)
+    sas_ET_filter = jtu.tree_map(lambda _: True, model.sas_ET)
+    # sas_Q_filter = eqx.tree_at(lambda t: (t.loc,), sas_Q_filter, replace=(False,))
+    sas_ET_filter = eqx.tree_at(lambda t: (t.loc,), sas_ET_filter, replace=(False,))
+    filter_model_spec = eqx.tree_at(lambda t: (t.sas_Q, t.sas_ET), filter_model_spec, replace=(sas_Q_filter, sas_ET_filter))
+
+    # We train the transport model againt the CQ observations only
+    model_new, loss_train, loss_test = train(
+        model.get_CQ, filter_model_spec.get_CQ,
+        epochs, loss_func, optim, x_train, y_train, x_test, y_test
+    )
+    return model_new.__self__, loss_train, loss_test
 
 
 def train(

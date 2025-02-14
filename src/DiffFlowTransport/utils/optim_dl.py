@@ -4,6 +4,8 @@
 # Email: shixijps@gmail.com
 
 import jax
+import jax.tree_util as jtu
+
 import optax
 import equinox as eqx
 import jax.numpy as jnp
@@ -12,6 +14,19 @@ from torch.utils.data import DataLoader
 
 from typing import Callable
 from jaxtyping import PyTree
+
+
+def train_flow_model(
+    model, epochs, loss_func, optim,
+    train_loader, test_loader
+):
+    filter_model_spec = jtu.tree_map(lambda _: True, model)
+
+    model_new, loss_train, loss_test = train_dl(
+        model, filter_model_spec, epochs, loss_func, optim, train_loader, test_loader
+    )
+
+    return model_new, loss_train, loss_test
 
 
 def train_dl(
@@ -83,6 +98,8 @@ def loss_func_optim(diff_model, static_model, x, y, loss_func):
     # pred_y = model(*x)
     # pred_y = model(x)
     pred_y = jax.vmap(model)(x)
+    # jax.debug.print("pred_y size: {a}", a=pred_y.shape)
+    # jax.debug.print("y size: {a}", a=y.shape)
     return loss_func(y, pred_y)
 
 

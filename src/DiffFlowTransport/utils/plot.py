@@ -145,7 +145,7 @@ def plot_timeseries_obs_1to1(
 
 
 def plot_PQET_ST(
-    J, Q, sT, pQETs, dt, timesteps, age_cut=1000,
+    J, Q, sT, pQETs, dt, timesteps, age_cut=1000, axes=None, figsize=None
 ):
     assert J.shape == Q.shape
     assert len(J) == len(timesteps)
@@ -158,7 +158,12 @@ def plot_PQET_ST(
     PET = jnp.cumsum(pQETs[...,1], axis=0) * dt
     ST = jnp.cumsum(sT[:,1:], axis=0) * dt
 
-    fig, axes = plt.subplots(5, 1, figsize=(10,12), sharex=False)
+    if figsize is None:
+        figsize = (10,12)
+
+    if axes is None:
+        fig, axes = plt.subplots(5, 1, figsize=figsize, sharex=False)
+
     ax = axes[0]
     ax.plot(timesteps, J, 'k')
     ax.set(title='$J$', ylabel='[mm/day]', xlim=[timesteps[0], timesteps[-1]], xticks=[])
@@ -193,7 +198,35 @@ def plot_PQET_ST(
     return axes
 
 
-def plot_PQET_quantile(pQETs, dt, timesteps):
+def plot_PQET_ST2(sT, pQETs, dt, last_age_cut=100, axes=None, figsize=None, label=''):
+    assert sT.shape[0] == pQETs.shape[0]
+    assert sT.shape[1] == pQETs.shape[0]+1
+
+    pQ = pQETs[...,0]
+    pET = pQETs[...,1]
+    PQ = jnp.cumsum(pQ, axis=0) * dt
+    PET = jnp.cumsum(pET, axis=0) * dt
+    ST = jnp.cumsum(sT[:,1:], axis=0) * dt
+
+    if figsize is None:
+        figsize = (10,12)
+
+    if axes is None:
+        fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=True)
+    
+    for i in range(1,last_age_cut+1):
+        axes[0,0].plot(ST[:,-i], PQ[:,-i], color='grey', alpha=0.5)
+        axes[1,0].plot(ST[:,-i], PET[:,-i], color='grey', alpha=0.5)
+        axes[0,1].plot(ST[:,-i], pQ[:,-i], color='grey', alpha=0.5)
+        axes[1,1].plot(ST[:,-i], pET[:,-i], color='grey', alpha=0.5)
+    axes[0,0].set(title=label, ylabel=r'$\Omega_Q$')
+    axes[1,0].set(xlabel=r'$S_T$', ylabel=r'$\Omega_{ET}$')
+    axes[0,1].set(title=label, ylabel=r'$\omega_Q$')
+    axes[1,1].set(xlabel=r'$S_T$', ylabel=r'$\omega_{ET}$')
+    return axes
+
+
+def plot_PQET_quantile(pQETs, dt, timesteps, axes=None, figsize=None, label=''):
 
     def quantile_from_cdf(cdf, quantile=0.5):
         """
@@ -243,15 +276,20 @@ def plot_PQET_quantile(pQETs, dt, timesteps):
     q2b = quantile_from_cdf(PET, quantile=0.25) * dt
     q3b = quantile_from_cdf(PET, quantile=0.75) * dt
 
-    fig, axes = plt.subplots(2, 1, figsize=(10,10), sharex=True)
+    if figsize is None:
+        figsize = (10,10)
+
+    if axes is None:
+        fig, axes = plt.subplots(2, 1, figsize=figsize, sharex=True)
+
     ax = axes[0]
     ax.fill_between(timesteps, q2, q3, color='blue', alpha=0.2)
     ax.plot(timesteps, q1, 'tab:blue')
-    ax.set(title='Q age distribution', ylabel='Age [Days]')
+    ax.set(title=f'Q age distribution ({label})', ylabel='Age [Days]')
 
     ax = axes[1]
     ax.fill_between(timesteps, q2b, q3b, color='blue', alpha=0.2)
     ax.plot(timesteps, q1b, 'tab:blue')
-    ax.set(title='ET age distribution', ylabel='Age [Days]')
+    ax.set(title=f'ET age distribution ({label})', ylabel='Age [Days]')
 
     return axes

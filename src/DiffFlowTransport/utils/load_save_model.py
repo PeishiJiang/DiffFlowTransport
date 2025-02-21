@@ -56,10 +56,3 @@ def load_flow_model(filename: str) -> eqx.Module:
 
     return model
 
-
-def save_model():
-    pass
-
-
-def load_model():
-    pass

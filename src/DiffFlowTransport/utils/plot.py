@@ -293,3 +293,38 @@ def plot_PQET_quantile(pQETs, dt, timesteps, axes=None, figsize=None, label=''):
     ax.set(title=f'ET age distribution ({label})', ylabel='Age [Days]')
 
     return axes
+
+
+def plot_young_water(
+    pQ, timesteps, cutoff_age=100, dt=1., axes=None, figsize=None, label=''
+):
+    max_young_age = cutoff_age * dt
+    PQ = jnp.cumsum(pQ, axis=0) * dt
+
+    # Calculate the young water fraction
+    PQ_young_fraction = PQ[cutoff_age,:]
+
+    # Calculate the mean age of the young water fraction (or young water age)
+    pQ_young = pQ[:cutoff_age,:]
+    ages = jnp.arange(1, cutoff_age+1) * dt
+    weighted_pQ_young = jax.vmap(lambda a,b: a*b, in_axes=(1, None))(pQ_young, ages)
+    weighted_pQ_young = jnp.sum(weighted_pQ_young, axis=1) / PQ_young_fraction
+
+    # Plot
+    if figsize is None:
+        figsize = (8,6)
+
+    if axes is None:
+        fig, axes = plt.subplots(2, 1, figsize=figsize, sharex=True)
+
+    ax = axes[0]
+    ax.plot(timesteps, PQ_young_fraction, 'tab:blue')
+    ax.set(title=f'Young water fraction less than {max_young_age} days ({label})', 
+           ylabel='[-]',ylim=[0, 1])
+
+    ax = axes[1]
+    ax.plot(timesteps, weighted_pQ_young, 'tab:blue')
+    ax.set(title=f'Young water age less than {max_young_age} days ({label})', 
+           ylabel='[Day]', xlabel='Time')
+
+    return axes

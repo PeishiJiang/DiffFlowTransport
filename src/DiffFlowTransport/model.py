@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 # import equinox as eqx
+import jax
 import jax.numpy as jnp
 import pandas as pd
 
@@ -19,6 +20,8 @@ from .utils import load_flow_model, load_transport_model
 from .utils import save_flow_model, save_transport_model
 from .utils import predict_dl, scale_df
 from .utils import make_pytorch_timeseries_dataloader
+
+from .sas import SAS_MDN, SAS_GammaMDN, SAS_NormalMDN
 
 from typing import Dict, Optional
 
@@ -54,7 +57,7 @@ class FlowTransport(object):
     
     def run_flow(self, data_loader):
         Q_norm = predict_dl(data_loader, self.flow_model)
-        return self.Q_scaler(Q_norm)
+        return self.Q_scaler(Q_norm).flatten()
 
     def run_transport(
         self, J, C_J, ET, Q=None, sas_Q_args=None, sas_ET_args=None, *, dl=None
@@ -89,7 +92,40 @@ class FlowTransport(object):
         transport_output = transport_model(J, C_J, Q, ET, sTmT_init, sas_Q_args, sas_ET_args)
 
         return transport_output, Q
+    
+    def get_mdn_weights(self, Q=None, sas_Q_args=None, sas_ET_args=None, dl=None):
+        """Function for getting the weights of distributions used in the MDN"""
+        flow_model = self.flow_model
+        transport_model = self.transport_model
+        coupling_type = self.flow_transport_coupling_type
 
+        # Calculate the streamflow if not given
+        if Q is None:
+            Q = self.run_flow(dl)
+
+        # Check whether the SAS function uses the MDN model
+        # TODO: check sas_ET in the future
+        if not isinstance(transport_model.sas_Q, (SAS_MDN, SAS_GammaMDN, SAS_NormalMDN)):
+            raise Exception('The streamflow SAS function does not use the MDN model.')
+        
+        if coupling_type == 0: # Take outflux as arguments
+            sas_Q_args = Q[:,None]
+            # sas_ET_args = ET[:,None]
+        
+        elif coupling_type == 1: # Take LSTM hidden states as arguments
+            hidden_states = predict_dl(dl, flow_model.calculate_hidden_states)
+            sas_Q_args = hidden_states
+            # sas_ET_args = hidden_states
+        
+        elif coupling_type == 2: # Take outflux and LSTM hidden states as arguments
+            hidden_states = predict_dl(dl, flow_model.calculate_hidden_states)
+            sas_Q_args = jnp.concat([hidden_states, Q[:,None]], axis=1)
+            # sas_ET_args = jnp.concat([hidden_states, ET[:,None]], axis=1)
+        
+        results = jax.vmap(transport_model.sas_Q.get_param)(sas_Q_args)
+        weights = results[0]
+
+        return weights
 
     # def run_coupled_flow_transport(
     #     self, flow_dl, J, C_J, Q, ET, sas_Q_args, sas_ET_args

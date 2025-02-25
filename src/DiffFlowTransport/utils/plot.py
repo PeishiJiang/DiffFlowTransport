@@ -295,6 +295,24 @@ def plot_PQET_quantile(pQETs, dt, timesteps, axes=None, figsize=None, label=''):
     return axes
 
 
+def plot_J_Q(J, Q, timesteps, ax=None, figsize=None):
+    # Plot
+    if figsize is None:
+        figsize = (8,4)
+
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=figsize, sharex=True)
+    
+    ax.plot(timesteps, Q, 'tab:blue')
+    ax.set(ylabel='Streamflow \n [mm/d]', ylim=[0, np.max(Q) * 1.2])
+
+    ax2 = ax.twinx()
+    ax2.plot(timesteps, J, 'k')
+    ax2.set(ylabel='Rainfall \n [mm/d]', ylim=[np.max(J) * 3, 0])
+
+    return [ax, ax2]
+
+
 def plot_young_water(
     pQ, timesteps, cutoff_age=100, dt=1., axes=None, figsize=None, label=''
 ):
@@ -318,13 +336,13 @@ def plot_young_water(
         fig, axes = plt.subplots(2, 1, figsize=figsize, sharex=True)
 
     ax = axes[0]
-    ax.plot(timesteps, PQ_young_fraction, 'tab:blue')
-    ax.set(title=f'Young water fraction less than {max_young_age} days ({label})', 
+    ax.plot(timesteps, PQ_young_fraction, 'k')
+    ax.set(title=f'Young water fraction with age smaller than {max_young_age} days ({label})', 
            ylabel='[-]',ylim=[0, 1])
 
     ax = axes[1]
-    ax.plot(timesteps, weighted_pQ_young, 'tab:blue')
-    ax.set(title=f'Young water age less than {max_young_age} days ({label})', 
+    ax.plot(timesteps, weighted_pQ_young, 'k')
+    ax.set(title=f'Mean age of young water (smaller than {max_young_age} days) ({label})', 
            ylabel='[Day]', xlabel='Time')
 
     return axes

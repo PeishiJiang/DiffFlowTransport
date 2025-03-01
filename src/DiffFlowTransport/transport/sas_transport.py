@@ -115,17 +115,27 @@ class SASTransport(eqx.Module):
         mT = jnp.concat([mT_init[:,None,:], mT], axis=1)  # (nτ, nt+1, nm)
 
         # Calculate C_Q
+        def divide_nan(mq, q):
+            qy = jnp.where(q==0.0, 1.0, q)
+            return jnp.where(q==0.0, 0.0, mq / qy)
         mQs = mQETs[...,0]  # (nτ, nt, nm)
-        C_Q1 = jax.vmap(lambda a,b: a/b, in_axes=(0,0))(
+        C_Q1 = jax.vmap(divide_nan, in_axes=(0,0))(
             mQs.sum(axis=0) * dt, Q
         )  # (nt, nm)
 
         # Contribution from old water
         pQs = pQETs[...,0]  # (nτ, nt)
         P_Q_old = P_Q_old - pQs.sum(axis=0) * dt  # (nt,)
+        # P_Q_old = jax.nn.relu(P_Q_old)
         C_Q2 = jnp.vectorize(lambda a,b: a*b)(
             jnp.stack([C_Q_old]*nt), jnp.stack([P_Q_old]*nm).T
         )  # (nt,nm)
+        # The old water concentration should be zero if Q is zero
+        def convert_zeroQ_to_zeroC(q, c):
+            return jnp.where(q==0.0, 0.0, c)
+        C_Q2 = jax.vmap(convert_zeroQ_to_zeroC, in_axes=(0,0))(
+            Q, C_Q2
+        )
 
         C_Q = C_Q1 + C_Q2  # (nt, nm)
         # print(C_Q1.shape, C_Q2.shape, C_Q_old.shape, P_Q_old.shape, nm, nt, pQs.shape)

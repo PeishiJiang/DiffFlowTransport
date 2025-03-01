@@ -36,6 +36,7 @@ def plot_timeseries(
     array, timesteps=None,
     ax=None, title=None,
     label=None, tunit="[day of year]",
+    ylabel='',
     alpha=1.0, xticks=None,
     linestyle="-", color="blue",
 ):
@@ -56,13 +57,13 @@ def plot_timeseries(
     if xticks is None:
         ax.set(
             xlabel=f"Time {tunit}",
-            title=title,
+            title=title, ylabel=ylabel,
             xlim=[timesteps[0], timesteps[-1]] if timesteps is not None else None,
         )
     else:
         ax.set(
             xlabel=f"Time {tunit}",
-            title=title,
+            title=title, ylabel=ylabel,
             xlim=[timesteps[0], timesteps[-1]] if timesteps is not None else None,
             xticks=xticks,
         )
@@ -94,7 +95,8 @@ def plot_obs_1to1(obs, sim, limx, limy=None, varn="varn", color='black', ax=None
 
 
 def plot_timeseries_obs_1to1(
-    obs, sim, lim, timesteps=None, varn="varn", axes=None, linestyle="-"
+    obs, sim, lim, timesteps=None, varn="varn", axes=None, linestyle="-",
+    units='[-]', label_sim='Simulation', label_obs='Observation'
 ):
     if axes is None:
         fig = plt.figure(figsize=(15, 4))
@@ -118,7 +120,7 @@ def plot_timeseries_obs_1to1(
         timesteps=timesteps,
         ax=ax1,
         title=None,
-        label="Observation",
+        label=label_obs,
         alpha=1.0,
         tunit="",
         linestyle='.',
@@ -129,9 +131,10 @@ def plot_timeseries_obs_1to1(
         timesteps=timesteps,
         ax=ax1,
         title=None,
-        label="Simulation",
+        label=label_sim,
         alpha=0.7,
         tunit="",
+        ylabel=units,
         linestyle=linestyle,
         color="tab:blue",
     )

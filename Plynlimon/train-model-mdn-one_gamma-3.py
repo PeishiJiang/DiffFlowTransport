@@ -36,7 +36,7 @@ df.head()
 
 # %%
 # The flow and transport model coupling type
-flow_transport_coupling_type = 1
+flow_transport_coupling_type = 3
 
 # Watershed
 watershed_name = 'Plynlimon'

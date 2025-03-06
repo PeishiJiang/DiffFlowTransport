@@ -13,14 +13,12 @@ import optax
 
 from DiffFlowTransport.transport import SASTransport
 from DiffFlowTransport.flow import LSTM
-from DiffFlowTransport.sas import initialize_sas_model
+from DiffFlowTransport.sas import initialize_sas_model, get_sas_inputs, get_sas_inputs_amount
 from DiffFlowTransport.utils import scale_df, make_pytorch_timeseries_dataloader
-from DiffFlowTransport.utils.plot import plot_timeseries_obs_1to1, plot_PQET_ST, plot_PQET_quantile
+from DiffFlowTransport.utils import get_transport_obs_fluxes
 from DiffFlowTransport.utils import train_flow_model, train_transport_model, mse, predict_dl
 from DiffFlowTransport.model import load_model, save_model
 
-import seaborn as sns
-import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 
 # %% [markdown]
@@ -33,19 +31,19 @@ df.index = pd.to_datetime(df.index, format='%m/%d/%y')
 df.head()
 
 # %%
-def get_fluxes_from_df(df, nτ=None):
-    J = jnp.array(df['J'].values)
-    Q = jnp.array(df['Q'].values)
-    ET = jnp.array(df['ET'].values)
-    C_J = jnp.array(df[['Cl mg/l']].values)
-    C_Q_J = jnp.array(df['Q Cl mg/l'].values)
+# def get_fluxes_from_df(df, nτ=None):
+#     J = jnp.array(df['J'].values)
+#     Q = jnp.array(df['Q'].values)
+#     ET = jnp.array(df['ET'].values)
+#     C_J = jnp.array(df[['Cl mg/l']].values)
+#     C_Q_J = jnp.array(df['Q Cl mg/l'].values)
 
-    # sTmT initial conditions
-    if nτ is None:
-        sTmT_init = jnp.zeros([J.size, 2])
-    else:
-        sTmT_init = jnp.zeros([nτ, 2])
-    return J, Q, ET, C_J, C_Q_J, sTmT_init
+#     # sTmT initial conditions
+#     if nτ is None:
+#         sTmT_init = jnp.zeros([J.size, 2])
+#     else:
+#         sTmT_init = jnp.zeros([nτ, 2])
+#     return J, Q, ET, C_J, C_Q_J, sTmT_init
 
 
 # %% [markdown]
@@ -59,7 +57,6 @@ flow_transport_coupling_type = 1
 watershed_name = 'Plynlimon'
 
 # Label
-# model_label = 'mdn-gaussian-coupled'
 model_label = f'mdn-gaussian-couplingtype{flow_transport_coupling_type}'
 
 
@@ -80,18 +77,7 @@ flow_params = {
 
 # %%
 # Number of SAS inputs depends on the coupling type
-if flow_transport_coupling_type == 0:
-    n_sas_input = 1
-
-elif flow_transport_coupling_type == 1:
-    n_sas_input = flow_params['n_hidden']
-
-elif flow_transport_coupling_type == 2:
-    n_sas_input = flow_params['n_hidden'] + 1
-
-else:
-    n_sas_input = 1
-    
+n_sas_input = get_sas_inputs_amount(flow_transport_coupling_type, flow_params['n_hidden'])
 
 # %%
 transport_params = {
@@ -220,12 +206,6 @@ all_loader = make_pytorch_timeseries_dataloader(
 )
 
 
-# # %%
-# ## TODO: Check whether the model is 'incorrectly' initialized !
-# x, y = next(iter(train_loader))
-# yp = jax.vmap(flow_model)(jnp.array(x))
-# plt.plot(yp)
-
 # %% [markdown]
 # ## Train the flow model
 
@@ -234,23 +214,6 @@ flow_model_new, loss_train_flow, loss_test_flow = train_flow_model(
     flow_model, train_config['epochs'], mse, optim, train_loader, test_loader
     # flow_model, 10, mse, optim, train_loader, test_loader
 )
-
-
-# # %%
-# fig, ax = plt.subplots(1, 1, figsize=(5, 4))
-# ax.plot(loss_train_flow, label='Training losses')
-# ax.plot(loss_test_flow, label='Testing losses')
-# ax.set(title=f'Losses with training data from {train_start} to {train_end} \n and testing data from {test_start} to {test_end}',
-#        ylabel='Loss (MSE)', xlabel='Epochs')
-# ax.legend(loc='upper right');
-
-
-# %% [markdown]
-# ## Make predictions and get the hidden states for SAS arguments
-
-# %%
-flow_hidden_states = predict_dl(all_loader, flow_model.calculate_hidden_states)
-Q_lstm = predict_dl(all_loader, flow_model)
 
 
 # %% [markdown]
@@ -263,28 +226,13 @@ Q_lstm = predict_dl(all_loader, flow_model)
 # TODO: skip the initial days with sequence length used by LSTM model
 cutoff_length = flow_dl_config['sequence_length']
 df_cut = df.iloc[cutoff_length:]
-J, Q, ET, C_J, C_Q_J, sTmT_init = get_fluxes_from_df(df_cut)
+J, Q, ET, C_J, C_Q_J, time = get_transport_obs_fluxes(df_cut, watershed_name)
+sTmT_init = jnp.zeros([J.size, 2])
 
 
 # %%
 # SAS arguments
-# sas_Q_args = flow_hidden_states
-# sas_ET_args = flow_hidden_states
-if flow_transport_coupling_type == 0:
-    sas_Q_args = Q[:,None]
-    sas_ET_args = ET[:,None]
-
-elif flow_transport_coupling_type == 1:
-    sas_Q_args = flow_hidden_states
-    sas_ET_args = flow_hidden_states
-
-elif flow_transport_coupling_type == 2:
-    sas_Q_args = jnp.concat([flow_hidden_states, Q[:,None]], axis=1)
-    sas_ET_args = jnp.concat([flow_hidden_states, ET[:,None]], axis=1)
-
-else:
-    sas_Q_args = Q[:,None]
-    sas_ET_args = ET[:,None]
+sas_Q_args, sas_ET_args = get_sas_inputs(flow_transport_coupling_type, Q, ET, flow_model_new, all_loader)
     
 
 # %%
@@ -317,47 +265,6 @@ jax.clear_caches()
 transport_model_new, loss_train_transport, loss_test_transport = train_transport_model(
     transport_model, train_config['epochs'], mse, optim, x_train, y_train, x_test, y_test
 )
-
-
-# %%
-# Plot the loss
-fig, ax = plt.subplots(1, 1, figsize=(5,3))
-ax.plot(loss_train_transport, label='train')
-ax.plot(loss_test_transport, label='test')
-ax.set(xlabel='Epochs', ylabel='Loss', 
-       title='$\Omega_Q$: MDN-Gaussian; $\Omega_{ET}$: Invariant Uniform')
-ax.legend()
-
-
-# %% [markdown]
-# ## Make predictions
-
-# %%
-# Run the trained model
-sT, mT, mQETs, pQETs, mRs, C_Q = transport_model_new(
-    J, C_J, Q, ET, sTmT_init, sas_Q_args, sas_ET_args
-)
-df_cut['C_Q mdn'] = C_Q
-
-
-# %%
-# plot_timeseries_obs_1to1(
-#     obs=df_cut['Q Cl mg/l'].values, sim=df_cut['C_Q mdn'].values, lim=[2,15], timesteps=df_cut.index,
-#     varn='Cl ($\Omega_Q$: MDN-Gaussian; $\Omega_{ET}$: Invariant Uniform)'
-# )
-
-
-# # %%
-# s, e = test_start, test_end
-# plot_timeseries_obs_1to1(
-#     obs=df_cut['Q Cl mg/l'][s:e].values, sim=df_cut['C_Q mdn'][s:e].values, lim=[2,15], 
-#     timesteps=df_cut[s:e].index,
-#     varn='Cl ($\Omega_Q$: MDN-Gaussian; $\Omega_{ET}$: Invariant Uniform)'
-# )
-
-
-# # %%
-# plot_PQET_quantile(pQETs, transport_params['transport_specs']['dt'], df_cut.index)
 
 
 # %% [markdown]

@@ -30,19 +30,34 @@ df = pd.read_csv(f_data, index_col=1)
 df.index = pd.to_datetime(df.index, format='%m/%d/%y')
 df.head()
 
+# %%
+# def get_fluxes_from_df(df, nτ=None):
+#     J = jnp.array(df['J'].values)
+#     Q = jnp.array(df['Q'].values)
+#     ET = jnp.array(df['ET'].values)
+#     C_J = jnp.array(df[['Cl mg/l']].values)
+#     C_Q_J = jnp.array(df['Q Cl mg/l'].values)
+
+#     # sTmT initial conditions
+#     if nτ is None:
+#         sTmT_init = jnp.zeros([J.size, 2])
+#     else:
+#         sTmT_init = jnp.zeros([nτ, 2])
+#     return J, Q, ET, C_J, C_Q_J, sTmT_init
+
 
 # %% [markdown]
 # # Parameters
 
 # %%
 # The flow and transport model coupling type
-flow_transport_coupling_type = 1
+flow_transport_coupling_type = 4
 
 # Watershed
 watershed_name = 'Plynlimon'
 
 # Label
-model_label = f'mdn-one_gamma-couplingtype{flow_transport_coupling_type}'
+model_label = f'mdn-gaussian-couplingtype{flow_transport_coupling_type}'
 
 
 # %% [markdown]
@@ -80,12 +95,12 @@ transport_params = {
     },
     "sas_specs": {
         "Q SAS fun": {
-            "func": "GammaMDN",
+            "func": "NormalMDN",
             "args": {
                 "scale": 8215.0,
                 "n_input": n_sas_input,  # Same as the number of hidden states used in the flow LSTM model
                 "n_hidden": 10,
-                "n_mixture": 1,
+                "n_mixture": 5,
                 "key": 42,
                 "width_size": 10,
                 "depth": 2
@@ -285,4 +300,11 @@ configs = {
 
 # %%
 save_model(configs, flow_model_new, transport_model_new, f_configs)
+
+
+# %% [markdown]
+# # Load the models
+# model, flow_dl, transport_data = load_model(f_configs)
+
+
 

@@ -30,19 +30,18 @@ df = pd.read_csv(f_data, index_col=1)
 df.index = pd.to_datetime(df.index, format='%m/%d/%y')
 df.head()
 
-
 # %% [markdown]
 # # Parameters
 
 # %%
 # The flow and transport model coupling type
-flow_transport_coupling_type = 1
+flow_transport_coupling_type = 4
 
 # Watershed
 watershed_name = 'Plynlimon'
 
 # Label
-model_label = f'mdn-one_gamma-couplingtype{flow_transport_coupling_type}'
+model_label = f'mdn-couplingtype{flow_transport_coupling_type}'
 
 
 # %% [markdown]
@@ -80,12 +79,11 @@ transport_params = {
     },
     "sas_specs": {
         "Q SAS fun": {
-            "func": "GammaMDN",
+            "func": "MDN",
             "args": {
                 "scale": 8215.0,
                 "n_input": n_sas_input,  # Same as the number of hidden states used in the flow LSTM model
                 "n_hidden": 10,
-                "n_mixture": 1,
                 "key": 42,
                 "width_size": 10,
                 "depth": 2
@@ -200,7 +198,6 @@ flow_model_new, loss_train_flow, loss_test_flow = train_flow_model(
     # flow_model, 10, mse, optim, train_loader, test_loader
 )
 
-
 # %% [markdown]
 # # The transport model
 
@@ -285,4 +282,11 @@ configs = {
 
 # %%
 save_model(configs, flow_model_new, transport_model_new, f_configs)
+
+
+# %% [markdown]
+# # Load the models
+# model, flow_dl, transport_data = load_model(f_configs)
+
+
 

@@ -247,8 +247,8 @@ flow_model_new, loss_train_flow, loss_test_flow = train_flow_model(
 # ## Make predictions and get the hidden states for SAS arguments
 
 # %%
-flow_hidden_states = predict_dl(all_loader, flow_model.calculate_hidden_states)
-Q_lstm = predict_dl(all_loader, flow_model)
+flow_hidden_states = predict_dl(all_loader, flow_model_new.calculate_hidden_states)
+Q_lstm = predict_dl(all_loader, flow_model_new)
 
 
 # %% [markdown]

@@ -69,16 +69,16 @@ class FlowTransport(object):
         coupling_type = self.flow_transport_coupling_type
 
         # Initial condition
-        sTmT_init = jnp.zeros([J.size, 1+transport_model.nm])
+        τ_max = transport_model.τ_max
+        τ_max = τ_max if τ_max is not None else J.size
+        sTmT_init = jnp.zeros([τ_max, 1+transport_model.nm])
 
         # Calculate the streamflow if not given
         if Q is None:
             Q = self.run_flow(dl)
         
         # Get the arguments of the SAS function
-        sas_Q_args, sas_ET_args = get_sas_inputs(
-            coupling_type, Q, ET, flow_model.calculate_hidden_states, dl
-        )
+        sas_Q_args, sas_ET_args = get_sas_inputs(coupling_type, Q, ET, flow_model, dl)
         # if coupling_type == 0: # Take outflux as arguments
         #     sas_Q_args = Q[:,None]
         #     sas_ET_args = ET[:,None]
@@ -98,7 +98,8 @@ class FlowTransport(object):
 
         return transport_output, Q
     
-    def get_mdn_weights(self, Q=None, ET=None, sas_Q_args=None, sas_ET_args=None, dl=None):
+    # def get_mdn_weights(self, Q=None, ET=None, sas_Q_args=None, sas_ET_args=None, dl=None):
+    def get_mdn_weights(self, Q=None, ET=None, dl=None):
         """Function for getting the weights of distributions used in the MDN"""
         flow_model = self.flow_model
         transport_model = self.transport_model
@@ -111,10 +112,11 @@ class FlowTransport(object):
         # Check whether the SAS function uses the MDN model
         # TODO: check sas_ET in the future
         if not isinstance(transport_model.sas_Q, (SAS_MDN, SAS_GammaMDN, SAS_NormalMDN)):
-            raise Exception('The streamflow SAS function does not use the MDN model.')
+            raise Exception('The streamflow SAS function does not use a MDN model.')
         
         sas_Q_args, sas_ET_args = get_sas_inputs(
-            coupling_type, Q, ET, flow_model.calculate_hidden_states, dl
+            # coupling_type, Q, ET, flow_model.calculate_hidden_states, dl
+            coupling_type, Q, ET, flow_model, dl
         )
         
         # if coupling_type == 0: # Take outflux as arguments

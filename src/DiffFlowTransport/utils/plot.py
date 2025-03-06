@@ -147,6 +147,41 @@ def plot_timeseries_obs_1to1(
     return fig, ax1, ax2  # pyright: ignore
 
 
+def plot_timeseries_obs_sim(
+    obs, sim, lim, timesteps=None, varn="varn", ax=None, linestyle="-",
+    units='[-]', label_sim='Simulation', label_obs='Observation'
+):
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(10, 4))
+    plot_timeseries(
+        obs,
+        timesteps=timesteps,
+        ax=ax,
+        title=None,
+        label=label_obs,
+        alpha=1.0,
+        tunit="",
+        linestyle='.',
+        color="black",
+    )
+    plot_timeseries(
+        sim,
+        timesteps=timesteps,
+        ax=ax,
+        title=None,
+        label=label_sim,
+        alpha=0.7,
+        tunit="",
+        ylabel=units,
+        linestyle=linestyle,
+        color="tab:blue",
+    )
+    ax.legend()
+    ax.set(title=varn)
+    # plt.subplots_adjust(hspace=0.9)
+    return ax  # pyright: ignore
+
+
 def plot_PQET_ST(
     J, Q, sT, pQETs, dt, timesteps, age_cut=1000, axes=None, figsize=None
 ):

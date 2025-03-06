@@ -22,13 +22,14 @@ class SASTransport(eqx.Module):
     α_Q: float
     α_ET: float
     nm: int
+    τ_max: int
     k1: Array
     C_eq: Array
     C_Q_old: Array
 
     def __init__(
         self, sas_Q, sas_ET, dt, α_Q, α_ET, k1, C_eq, C_Q_old, 
-        solver=solve_step_rk4
+        τ_max=None, solver=solve_step_rk4
     ):
         """Initialization function
 
@@ -51,6 +52,7 @@ class SASTransport(eqx.Module):
         self.k1 = jnp.array(k1)
         self.C_eq = jnp.array(C_eq)
         self.C_Q_old = jnp.array(C_Q_old)
+        self.τ_max = τ_max
         self.solver = solver
 
         # Number of solutes

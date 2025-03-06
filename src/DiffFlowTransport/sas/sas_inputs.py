@@ -82,6 +82,7 @@ def get_sas_inputs(flow_transport_coupling_type, Q, ET=None, flow_model=None, dl
         sas_ET_args = ET_norm[:,None]
 
     elif flow_transport_coupling_type == 4: # Take logarized and normalized outflux and LSTM hidden states as arguments
+        hidden_states = predict_dl(dl, flow_model.calculate_hidden_states)
         sas_Q_args = jnp.concat([hidden_states, logQ_norm[:,None]], axis=1)
         sas_ET_args = jnp.concat([hidden_states, ET_norm[:,None]], axis=1)
 

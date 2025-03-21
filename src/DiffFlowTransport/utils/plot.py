@@ -351,6 +351,95 @@ def plot_J_Q(J, Q, timesteps, ax=None, figsize=None):
     return [ax, ax2]
 
 
+# def plot_QT_ST(Q, pQ, sT, dt=1.0, ax=None, figsize=None):
+def plot_PQET_ST3(
+    Q, ET, pQETs, sT, dt=1.0, last_age_cut=100, axes=None, figsize=None, label=''
+):
+    assert sT.shape[0] == pQETs.shape[0]
+    assert sT.shape[1] == pQETs.shape[0]+1
+
+    pQETs = jnp.maximum(pQETs, 0)
+
+    pQ = pQETs[...,0]
+    pET = pQETs[...,1]
+    PQ = jnp.cumsum(pQ, axis=0) * dt
+    PET = jnp.cumsum(pET, axis=0) * dt
+    ST = jnp.cumsum(sT[:,1:], axis=0) * dt
+    S = ST[-1,:]
+
+    ωQ = (PQ[1:,:] - PQ[:-1,:]) / (ST[1:,:] - ST[:-1,:])
+    ωET = (PET[1:,:] - PET[:-1,:]) / (ST[1:,:] - ST[:-1,:])
+    ωQ = jnp.nan_to_num(ωQ, nan=0.0, posinf=0.0, neginf=0.0)
+    ωET = jnp.nan_to_num(ωET, nan=0.0, posinf=0.0, neginf=0.0)
+
+    ωQ = jnp.maximum(ωQ, 0)
+    ωET = jnp.maximum(ωET, 0)
+
+    QT = jax.vmap(lambda a,b: a*b, in_axes=(0,1), out_axes=1)(Q, PQ)
+    ETT = jax.vmap(lambda a,b: a*b, in_axes=(0,1), out_axes=1)(ET, PQ)
+    ST_scaled = jax.vmap(lambda a,b: a/b, in_axes=(1,0), out_axes=1)(ST,S)
+
+    # Calculate the complement
+    STC = jax.vmap(lambda a,b: a-b, in_axes=(0,1), out_axes=1)(S, ST)
+    QTC = jax.vmap(lambda a,b: a-b, in_axes=(0,1), out_axes=1)(Q, QT)
+    ETTC = jax.vmap(lambda a,b: a-b, in_axes=(0,1), out_axes=1)(ET, ETT)
+
+    Qω = jax.vmap(lambda a,b: a*b, in_axes=(0,1), out_axes=1)(Q, ωQ)
+    ETω = jax.vmap(lambda a,b: a*b, in_axes=(0,1), out_axes=1)(ET, ωET)
+
+    if figsize is None:
+        figsize = (10,12)
+
+    if axes is None:
+        fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=False)
+    
+    for i in range(1,last_age_cut+1):
+        axes[0,0].plot(STC[:,-i], QTC[:,-i], color='grey', alpha=0.5)
+        axes[1,0].plot(ST_scaled[1:,-i], Qω[:,-i], color='grey', alpha=0.5)
+        axes[0,1].plot(STC[:,-i], ETTC[:,-i], color='grey', alpha=0.5)
+        axes[1,1].plot(ST_scaled[1:,-i], ETω[:,-i], color='grey', alpha=0.5)
+    axes[0,0].set(title=label, xlabel=r'$\bar{S_T}$', ylabel=r'$\bar{Q_T}$')
+    axes[1,0].set(xlabel=r'$S_T / S$', ylabel=r'$Q\omega_{Q}$')
+    axes[0,1].set(title=label, xlabel=r'$\bar{S_T}$', ylabel=r'$\bar{ET_T}$')
+    axes[1,1].set(xlabel=r'$S_T / S$', ylabel=r'$ET\omega_{ET}$')
+
+    # plt.subplots_adjust(wspace=0.2, hspace=0.2)
+
+    return axes
+
+# def plot_PQET_ST3(Q, ET, pQETs, sT, dt=1.0, axes=None, figsize=None):
+#     assert sT.shape[0] == pQETs.shape[0]
+#     assert sT.shape[1] == pQETs.shape[0]+1
+
+#     pQ = pQETs[...,0]
+#     pET = pQETs[...,1]
+#     PQ = jnp.cumsum(pQ, axis=0) * dt
+#     PET = jnp.cumsum(pET, axis=0) * dt
+#     ST = jnp.cumsum(sT[:,1:], axis=0) * dt
+#     S = ST[-1,:]
+
+#     ωQ = (PQ[1:,:] - PQ[:-1,:]) / (ST[1:,:] - ST[:-1,:])
+#     ωET = (PET[1:,:] - PET[:-1,:]) / (ST[1:,:] - ST[:-1,:])
+
+#     if figsize is None:
+#         figsize = (10,12)
+
+#     if axes is None:
+#         fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=True)
+    
+#     for i in range(1,last_age_cut+1):
+#         axes[0,0].plot(ST[:,-i], PQ[:,-i], color='grey', alpha=0.5)
+#         axes[1,0].plot(ST[:,-i], PET[:,-i], color='grey', alpha=0.5)
+#         axes[0,1].plot(ST[:,-i], pQ[:,-i], color='grey', alpha=0.5)
+#         axes[1,1].plot(ST[:,-i], pET[:,-i], color='grey', alpha=0.5)
+#     axes[0,0].set(title=label, ylabel=r'$\Omega_Q$')
+#     axes[1,0].set(xlabel=r'$S_T$', ylabel=r'$\Omega_{ET}$')
+#     axes[0,1].set(title=label, ylabel=r'$\omega_Q$')
+#     axes[1,1].set(xlabel=r'$S_T$', ylabel=r'$\omega_{ET}$')
+
+#     return axes
+
+
 def plot_young_water(
     pQ, timesteps, cutoff_age=100, dt=1., axes=None, figsize=None, label=''
 ):

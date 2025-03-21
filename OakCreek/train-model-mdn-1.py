@@ -95,7 +95,7 @@ transport_params = {
                 "scale": 4000.0,
                 "n_input": n_sas_input,  # Same as the number of hidden states used in the flow LSTM model
                 "n_hidden": 10,
-                "key": 42,
+                "key": 20,
                 "width_size": 10,
                 "depth": 2
             }

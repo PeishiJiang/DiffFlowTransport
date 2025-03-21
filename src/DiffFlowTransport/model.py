@@ -34,7 +34,7 @@ class FlowTransport(object):
 
     def __init__(
         self, f_transport, f_flow, Q_scaler,
-        flow_transport_coupling_type
+        flow_transport_coupling_type, logQminmax, ETminmax
     ):
         """The flow and transport model.
 
@@ -43,6 +43,8 @@ class FlowTransport(object):
             f_flow (str): The model file of the flow model.
             Q_scaler (Callable): The streamflow inverse scaler function.
             flow_transport_coupling_type (str): The type of flow and transport coupling.
+            Qminmax (List): The min and max values of Q.
+            ETminmax (List): The min and max values of ET.
         
         """
         # Load the transport model
@@ -53,6 +55,9 @@ class FlowTransport(object):
 
         # Streamflow scaler
         self.Q_scaler = Q_scaler
+
+        # Q and ET bounds
+        self.logQminmax, self.ETminmax = logQminmax, ETminmax
 
         # Coupling type
         self.flow_transport_coupling_type = flow_transport_coupling_type
@@ -68,6 +73,8 @@ class FlowTransport(object):
         transport_model = self.transport_model
         coupling_type = self.flow_transport_coupling_type
 
+        logQminmax, ETminmax = self.logQminmax, self.ETminmax
+
         # Initial condition
         τ_max = transport_model.τ_max
         τ_max = τ_max if τ_max is not None else J.size
@@ -78,20 +85,9 @@ class FlowTransport(object):
             Q = self.run_flow(dl)
         
         # Get the arguments of the SAS function
-        sas_Q_args, sas_ET_args = get_sas_inputs(coupling_type, Q, ET, flow_model, dl)
-        # if coupling_type == 0: # Take outflux as arguments
-        #     sas_Q_args = Q[:,None]
-        #     sas_ET_args = ET[:,None]
-        
-        # elif coupling_type == 1: # Take LSTM hidden states as arguments
-        #     hidden_states = predict_dl(dl, flow_model.calculate_hidden_states)
-        #     sas_Q_args = hidden_states
-        #     sas_ET_args = hidden_states
-        
-        # elif coupling_type == 2: # Take outflux and LSTM hidden states as arguments
-        #     hidden_states = predict_dl(dl, flow_model.calculate_hidden_states)
-        #     sas_Q_args = jnp.concat([hidden_states, Q[:,None]], axis=1)
-        #     sas_ET_args = jnp.concat([hidden_states, ET[:,None]], axis=1)
+        sas_Q_args, sas_ET_args = get_sas_inputs(
+            coupling_type, Q, ET, flow_model, dl, logQminmax, ETminmax
+        )
 
         # Run transport model
         transport_output = transport_model(J, C_J, Q, ET, sTmT_init, sas_Q_args, sas_ET_args)
@@ -105,6 +101,8 @@ class FlowTransport(object):
         transport_model = self.transport_model
         coupling_type = self.flow_transport_coupling_type
 
+        logQminmax, ETminmax = self.logQminmax, self.ETminmax
+
         # Calculate the streamflow if not given
         if Q is None:
             Q = self.run_flow(dl)
@@ -116,7 +114,7 @@ class FlowTransport(object):
         
         sas_Q_args, sas_ET_args = get_sas_inputs(
             # coupling_type, Q, ET, flow_model.calculate_hidden_states, dl
-            coupling_type, Q, ET, flow_model, dl
+            coupling_type, Q, ET, flow_model, dl, logQminmax, ETminmax
         )
         
         # if coupling_type == 0: # Take outflux as arguments
@@ -164,22 +162,16 @@ def load_model(f_configs, saved_folder=Path("./models")):
     os.chdir(saved_folder)
 
     with open(f_configs, "r") as f:
-        # hyperparams = json.loads(f.readline().decode())
         hyperparams = json.loads(f.readline())
     watershed = hyperparams['watershed_name']
 
     # Load the data
     f_data = hyperparams['f_data']
-    # if watershed.lower() == 'plynlimon':
-    #     df = pd.read_csv(f_data, index_col=1)
-    #     df.index = pd.to_datetime(df.index, format='%m/%d/%y')
     df = read_obs_csv(f_data, watershed)
 
     # Load the data loader for the flow model
     flow_dl_configs = hyperparams['flow_dl_configs']
     train_configs = hyperparams['train_configs']
-    # train_start, train_end = train_configs['train_start'], train_configs['train_end']
-    # test_start, test_end = train_configs['test_start'], train_configs['test_end']
 
     Q_varn = flow_dl_configs['targets'][0]
     scaler, df_norm = scale_df(df, train_configs['scaler_type'])
@@ -193,6 +185,10 @@ def load_model(f_configs, saved_folder=Path("./models")):
     cutoff_length = flow_dl_configs['sequence_length']
     df_cut = df.iloc[cutoff_length:]
     transport_data = get_transport_obs_fluxes(df_cut, watershed)
+    Q, ET = transport_data[1], transport_data[2]
+    logQ = jnp.log10(Q)
+    logQ = logQ.at[~jnp.isfinite(logQ)].set(logQ[jnp.isfinite(logQ)].min())
+    logQminmax, ETminmax = [logQ.min(), logQ.max()], [ET.min(), ET.max()]
 
     # Load the flow and transport model
     flow_transport_coupling_type = hyperparams['flow_transport_coupling_type']
@@ -200,7 +196,7 @@ def load_model(f_configs, saved_folder=Path("./models")):
     f_transport_model = hyperparams['f_transport']
     model = FlowTransport(
         f_transport_model, f_flow_model, Q_scaler, 
-        flow_transport_coupling_type
+        flow_transport_coupling_type, logQminmax, ETminmax
     )
 
     # Get the loss

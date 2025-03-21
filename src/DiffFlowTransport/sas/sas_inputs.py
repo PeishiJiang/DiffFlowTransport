@@ -5,6 +5,8 @@
 
 import jax.numpy as jnp
 
+from typing import Optional, List
+
 from ..utils import predict_dl
 
 
@@ -33,7 +35,10 @@ def get_sas_inputs_amount(flow_transport_coupling_type, n_flow_hidden=None):
     return n_sas_input
 
 
-def get_sas_inputs(flow_transport_coupling_type, Q, ET=None, flow_model=None, dl=None):
+def get_sas_inputs(
+    flow_transport_coupling_type, Q, ET=None, flow_model=None, dl=None,
+    logQminmax=None, ETminmax=None
+):
     """Function for getting SAS function environment dependencies."""
     if ET is None:
         ET = Q
@@ -41,10 +46,31 @@ def get_sas_inputs(flow_transport_coupling_type, Q, ET=None, flow_model=None, dl
     # Calculate normalized Q and ET
     # TODO: logQ max/min and ET max/min should be fixed and treated as inputs
     if flow_transport_coupling_type in [3,4]:
+        # Calculate logQ
         logQ = jnp.log10(Q)
         logQ = logQ.at[~jnp.isfinite(logQ)].set(logQ[jnp.isfinite(logQ)].min())
-        logQ_norm = (logQ - logQ.min()) / (logQ.max() - logQ.min())
-        ET_norm = (ET - ET.min()) / (ET.max() - ET.min())
+        
+        # Get the bounds of logQ
+        if logQminmax is not None:
+            logQmin, logQmax = logQminmax[0], logQminmax[1]
+            # # Read the minimum from the loqQ is the given Qmin is not positive.
+            # logQmin = jnp.log10(Qmin) if Qmin > 0.0 else logQ.min()
+            # logQmax = jnp.log10(Qmax)
+        else:
+            logQmin, logQmax = logQ.min(), logQ.max()
+        
+        # Get the bounds of ET
+        if ETminmax is not None:
+            ETmin, ETmax = ETminmax[0], ETminmax[1]
+        else:
+            ETmin, ETmax = ET.min(), ET.max()
+    
+        # Calculate the normalized logQ and ET
+        logQ_norm = (logQ - logQmin) / (logQmax - logQmin)
+        ET_norm = (ET - ETmin) / (ETmax - ETmin)
+        # print(Qmin, Qmax)
+        # print(logQ_norm)
+        # print(ET_norm)
 
     # Calculate the SAS function environment dependencies
     if flow_transport_coupling_type == 0: # Take outflux as arguments

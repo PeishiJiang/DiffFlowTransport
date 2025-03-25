@@ -19,7 +19,10 @@ export PYTHONPATH=${PYTHONPATH}:/global/cfs/cdirs/m1800/peishi/DataDrivenFlowTra
 #srun --exact -u -n 1 -c 1 python ./train-model-mdn-gamma-1.py &
 #srun --exact -u -n 1 -c 1 python ./train-model-mdn-one_gamma-1.py &
 # srun --exact -u -n 1 -c 1 python ./train-model-mdn-one_gamma-2.py &
-srun --exact -u -n 1 -c 1 python ./train-model-mdn-one_gamma-3.py &
-srun --exact -u -n 1 -c 1 python ./train-model-mdn-one_gamma-4.py &
-srun --exact -u -n 1 -c 1 python ./train-model-mdn-4.py &
+# srun --exact -u -n 1 -c 1 python ./train-model-mdn-one_gamma-3.py &
+# srun --exact -u -n 1 -c 1 python ./train-model-mdn-one_gamma-4.py &
+# srun --exact -u -n 1 -c 1 python ./train-model-mdn-4.py &
+srun --exact -u -n 1 -c 1 python ./train-model-mdn2-1.py &
+srun --exact -u -n 1 -c 1 python ./train-model-mdn2-3.py &
+srun --exact -u -n 1 -c 1 python ./train-model-mdn2-4.py &
 wait

@@ -22,7 +22,7 @@ from .utils import predict_dl, scale_df
 from .utils import make_pytorch_timeseries_dataloader
 from .utils import read_obs_csv, get_transport_obs_fluxes
 
-from .sas import SAS_MDN, SAS_GammaMDN, SAS_NormalMDN
+from .sas import SAS_MDN, SAS_MDN2, SAS_GammaMDN, SAS_NormalMDN
 from .sas import get_sas_inputs, get_sas_inputs_amount
 
 # from typing import Dict, Optional
@@ -109,7 +109,7 @@ class FlowTransport(object):
 
         # Check whether the SAS function uses the MDN model
         # TODO: check sas_ET in the future
-        if not isinstance(transport_model.sas_Q, (SAS_MDN, SAS_GammaMDN, SAS_NormalMDN)):
+        if not isinstance(transport_model.sas_Q, (SAS_MDN, SAS_MDN2, SAS_GammaMDN, SAS_NormalMDN)):
             raise Exception('The streamflow SAS function does not use a MDN model.')
         
         sas_Q_args, sas_ET_args = get_sas_inputs(

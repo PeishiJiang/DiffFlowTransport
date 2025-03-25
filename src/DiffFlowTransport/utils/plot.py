@@ -11,6 +11,9 @@ import jax.tree_util as jtu
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.gridspec as gridspec
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
 
 from .metrics import compute_metrics
 
@@ -358,10 +361,10 @@ def plot_PQET_ST3(
     assert sT.shape[0] == pQETs.shape[0]
     assert sT.shape[1] == pQETs.shape[0]+1
 
-    pQETs = jnp.maximum(pQETs, 0)
+    pQETs2 = jnp.maximum(pQETs, 0)
 
-    pQ = pQETs[...,0]
-    pET = pQETs[...,1]
+    pQ = pQETs2[...,0]
+    pET = pQETs2[...,1]
     PQ = jnp.cumsum(pQ, axis=0) * dt
     PET = jnp.cumsum(pET, axis=0) * dt
     ST = jnp.cumsum(sT[:,1:], axis=0) * dt
@@ -376,7 +379,7 @@ def plot_PQET_ST3(
     ωET = jnp.maximum(ωET, 0)
 
     QT = jax.vmap(lambda a,b: a*b, in_axes=(0,1), out_axes=1)(Q, PQ)
-    ETT = jax.vmap(lambda a,b: a*b, in_axes=(0,1), out_axes=1)(ET, PQ)
+    ETT = jax.vmap(lambda a,b: a*b, in_axes=(0,1), out_axes=1)(ET, PET)
     ST_scaled = jax.vmap(lambda a,b: a/b, in_axes=(1,0), out_axes=1)(ST,S)
 
     # Calculate the complement
@@ -395,9 +398,13 @@ def plot_PQET_ST3(
     
     for i in range(1,last_age_cut+1):
         axes[0,0].plot(STC[:,-i], QTC[:,-i], color='grey', alpha=0.5)
-        axes[1,0].plot(ST_scaled[1:,-i], Qω[:,-i], color='grey', alpha=0.5)
+        # axes[0,0].plot(ST[:,-i], PQ[:,-i], color='grey', alpha=0.5)
+        # axes[1,0].plot(ST_scaled[1:,-i], Qω[:,-i], color='grey', alpha=0.5)
+        axes[1,0].plot(ST[1:,-i], Qω[:,-i], color='grey', alpha=0.5)
+        # axes[0,1].plot(ST[:,-i], ETT[:,-i], color='grey', alpha=0.5)
         axes[0,1].plot(STC[:,-i], ETTC[:,-i], color='grey', alpha=0.5)
-        axes[1,1].plot(ST_scaled[1:,-i], ETω[:,-i], color='grey', alpha=0.5)
+        # axes[1,1].plot(ST_scaled[1:,-i], ETω[:,-i], color='grey', alpha=0.5)
+        axes[1,1].plot(ST[1:,-i], ETω[:,-i], color='grey', alpha=0.5)
     axes[0,0].set(title=label, xlabel=r'$\bar{S_T}$', ylabel=r'$\bar{Q_T}$')
     axes[1,0].set(xlabel=r'$S_T / S$', ylabel=r'$Q\omega_{Q}$')
     axes[0,1].set(title=label, xlabel=r'$\bar{S_T}$', ylabel=r'$\bar{ET_T}$')
@@ -405,6 +412,71 @@ def plot_PQET_ST3(
 
     # plt.subplots_adjust(wspace=0.2, hspace=0.2)
 
+    return axes
+
+
+def plot_PQET_ST_selected(
+    Q, pQETs, sT, timesteps, sel_time_ind=None,
+    dt=1.0, axes=None, figsize=None, label=''
+):
+    assert sT.shape[0] == pQETs.shape[0]
+    assert sT.shape[1] == pQETs.shape[0]+1
+
+    # pQETs2 = jnp.maximum(pQETs, 0)
+    pQETs2 = pQETs
+
+    pQ = pQETs2[...,0]
+    pET = pQETs2[...,1]
+    PQ = jnp.cumsum(pQ, axis=0) * dt
+    PET = jnp.cumsum(pET, axis=0) * dt
+    ST = jnp.cumsum(sT[:,1:], axis=0) * dt
+    S = ST[-1,:]
+
+    ωQ = (PQ[1:,:] - PQ[:-1,:]) / (ST[1:,:] - ST[:-1,:])
+    ωET = (PET[1:,:] - PET[:-1,:]) / (ST[1:,:] - ST[:-1,:])
+    ωQ = jnp.nan_to_num(ωQ, nan=0.0, posinf=0.0, neginf=0.0)
+    ωET = jnp.nan_to_num(ωET, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # ωQ = jnp.maximum(ωQ, 0)
+    # ωET = jnp.maximum(ωET, 0)
+
+    if figsize is None:
+        figsize = (10,12)
+
+    if axes is None:
+        fig = plt.figure(figsize=(10, 10))
+        gs = gridspec.GridSpec(3, 2, height_ratios=[0.5, 1, 1], hspace=0.4, wspace=0.3)
+    
+    if sel_time_ind is None:
+        sel_time_ind = jnp.argsort(Q)[:2].tolist() + jnp.argsort(Q)[-2:].tolist()
+        print(sel_time_ind)
+    
+    # Plot streamflow
+    ax0 = fig.add_subplot(gs[0,:])
+    ax0.plot(timesteps, Q, color='k')
+    ax0.set(title='Streamflow', ylabel='m3/d', xlabel='Time')
+
+    ax1 = fig.add_subplot(gs[1, 0])
+    ax2 = fig.add_subplot(gs[1, 1])
+    ax3 = fig.add_subplot(gs[2, 0])
+    ax4 = fig.add_subplot(gs[2, 1])
+    
+    # Plot SAS
+    num_lines = len(sel_time_ind)
+    cmap = cm.get_cmap('plasma', num_lines)
+    colors = [cmap(i) for i in range(num_lines)]
+    for i,it in enumerate(sel_time_ind):
+        color = colors[i]
+        ax0.axvline(x=timesteps[it], color=color, alpha=0.5)
+        ax1.plot(ST[:,it], PQ[:,it], color=color, alpha=0.5)
+        ax2.plot(ST[1:,it], ωQ[:,it], color=color, alpha=0.5)
+        ax3.plot(ST[:,it], PET[:,it], color=color, alpha=0.5)
+        ax4.plot(ST[1:,it], ωET[:,it], color=color, alpha=0.5)
+    ax1.set(title=label, xlabel=r'$S_T$', ylabel=r'$P_Q$')
+    ax2.set(xlabel=r'$S_T$', ylabel=r'$\omega_{Q}$')
+    ax3.set(title=label, xlabel=r'$S_T$', ylabel=r'$P_{ET}$')
+    ax4.set(xlabel=r'$S_T$', ylabel=r'$\omega_{ET}$')
+    
     return axes
 
 # def plot_PQET_ST3(Q, ET, pQETs, sT, dt=1.0, axes=None, figsize=None):
@@ -439,7 +511,6 @@ def plot_PQET_ST3(
 
 #     return axes
 
-
 def plot_young_water(
     pQ, timesteps, cutoff_age=100, dt=1., axes=None, figsize=None, label=''
 ):
@@ -473,3 +544,4 @@ def plot_young_water(
            ylabel='[Day]', xlabel='Time')
 
     return axes
+

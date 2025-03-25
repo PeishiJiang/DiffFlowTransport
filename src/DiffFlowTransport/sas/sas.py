@@ -354,6 +354,70 @@ class SAS_MDN(SASBase):
         return jnp.sum(jnp.dot(α, cdfs))
 
 
+class SAS_MDN2(SASBase):
+    """A general MDN consisting of a Uniform, a Gaussian, and a Gamma distributions"""
+    m: eqx.Module
+    m_α: eqx.Module
+    m_a: eqx.Module
+    # m_scale: eqx.Module
+    
+    def __init__(self, n_input, n_hidden, key, loc=0., scale=1., **mlp_kwargs):
+        super().__init__(loc, scale)
+        key = jax.random.key(key)
+        key1, key2, key3, key4 = jax.random.split(key, 4)
+        
+        # MLP model for predicting the hidden states
+        # n_mlp_output = (n_output+2) * n_mixture
+        self.m = MLP(in_size=n_input, out_size=n_hidden, key=key1, **mlp_kwargs)
+        
+        # MLP model for predicting α, coefficients a, and the scale
+        self.m_α = Linear(in_features=n_hidden, out_features=3, key=key2)
+        self.m_a = Linear(in_features=n_hidden, out_features=7, key=key3)
+        # self.m_a = Linear(in_features=n_hidden, out_features=3, key=key3)
+        # self.m_scale = Linear(in_features=n_hidden, out_features=3, key=key4)
+        # self.m_loc = Linear(in_features=n_hidden, out_features=3, key=key4)
+
+    def get_param(self, x):
+        z = self.m(x)  # shape: (n_hidden,)
+
+        # Calculate The weights (n_mixture,)
+        z_α = self.m_α(z)
+        α = jax.nn.softmax(z_α)
+
+        # Calculate the parameters of distributions
+        z_a = self.m_a(z) # shape: (7,)
+        Γa, loc_α, scale_α = z_a[0], z_a[1:4], z_a[4:]
+        Γa = jax.nn.sigmoid(Γa)  # shape parameter of gamma distribution
+        
+        # Calculate the loc and scale
+        loc_α = jax.nn.softplus(loc_α)
+        scale_α = jax.nn.softplus(scale_α)
+        loc = self.loc * loc_α
+        scale = self.scale * scale_α
+        
+        return α, Γa, loc, scale
+    
+    def pdf(self, Si, x):
+        α, Γa, loc, scale = self.get_param(x)
+        y = (Si - loc) / scale
+        y = jax.lax.max(1e-20, y)
+        pdf_norm = jax.scipy.stats.norm.cdf(y[0], 0, 1)
+        pdf_uniform = jax.scipy.stats.uniform.cdf(y[1], loc=0., scale=1.)
+        pdf_gamma = jax.scipy.stats.gamma.cdf(y[2], Γa, loc=0., scale=1.)
+        pdfs = jnp.array([pdf_norm, pdf_uniform, pdf_gamma])
+        return jnp.sum(jnp.dot(α, pdfs))
+    
+    def __call__(self, Si, x):
+        α, Γa, loc, scale = self.get_param(x)
+        y = (Si - loc) / scale
+        y = jax.lax.max(1e-20, y)
+        cdf_norm = jax.scipy.stats.norm.cdf(y[0], 0, 1)
+        cdf_uniform = jax.scipy.stats.uniform.cdf(y[1], loc=0., scale=1.)
+        cdf_gamma = jax.scipy.stats.gamma.cdf(y[2], Γa, loc=0., scale=1.)
+        cdfs = jnp.array([cdf_norm, cdf_uniform, cdf_gamma])
+        return jnp.sum(jnp.dot(α, cdfs))
+
+
 def initialize_sas_model(sas_params: Dict):
     model_type = sas_params['func']
     model_params = sas_params['args']
@@ -384,5 +448,8 @@ def initialize_sas_model(sas_params: Dict):
 
     elif model_type.lower() == 'mdn':
         model = SAS_MDN
+
+    elif model_type.lower() == 'mdn2':
+        model = SAS_MDN2
 
     return model(**model_params)

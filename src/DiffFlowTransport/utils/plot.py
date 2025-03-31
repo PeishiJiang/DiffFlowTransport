@@ -344,11 +344,11 @@ def plot_J_Q(J, Q, timesteps, ax=None, figsize=None):
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=figsize, sharex=True)
     
-    ax.plot(timesteps, Q, 'tab:blue')
+    ax.plot(timesteps, Q, 'k')
     ax.set(ylabel='Streamflow \n [mm/d]', ylim=[0, np.max(Q) * 1.2])
 
     ax2 = ax.twinx()
-    ax2.plot(timesteps, J, 'k')
+    ax2.plot(timesteps, J, 'tab:blue')
     ax2.set(ylabel='Rainfall \n [mm/d]', ylim=[np.max(J) * 3, 0])
 
     return [ax, ax2]
@@ -417,12 +417,12 @@ def plot_PQET_ST3(
 
 def plot_PQET_ST_selected(
     Q, pQETs, sT, timesteps, sel_time_ind=None,
-    dt=1.0, axes=None, figsize=None, label=''
+    dt=1.0, last_age_cut=500, axes=None, figsize=None, label=''
 ):
     assert sT.shape[0] == pQETs.shape[0]
-    assert sT.shape[1] == pQETs.shape[0]+1
+    assert sT.shape[1] == pQETs.shape[1]+1
 
-    # pQETs2 = jnp.maximum(pQETs, 0)
+    pQETs2 = jnp.maximum(pQETs, 0)
     pQETs2 = pQETs
 
     pQ = pQETs2[...,0]
@@ -445,16 +445,21 @@ def plot_PQET_ST_selected(
 
     if axes is None:
         fig = plt.figure(figsize=(10, 10))
-        gs = gridspec.GridSpec(3, 2, height_ratios=[0.5, 1, 1], hspace=0.4, wspace=0.3)
+        gs = gridspec.GridSpec(3, 2, height_ratios=[0.5, 1, 1], hspace=0.3, wspace=0.3)
     
     if sel_time_ind is None:
-        sel_time_ind = jnp.argsort(Q)[:2].tolist() + jnp.argsort(Q)[-2:].tolist()
-        print(sel_time_ind)
+        nt, nt_cut = Q.size, int(Q.size * 0.5)
+        nt_res_mid = int((nt - nt_cut)/2)
+        Q2 = Q[nt_cut:]
+        sel_time_ind = jnp.argsort(Q2)[:2].tolist() + \
+            jnp.argsort(Q2)[nt_res_mid:nt_res_mid+2].tolist() + \
+            jnp.argsort(Q2)[-2:].tolist()
+        sel_time_ind = [ind+nt_cut for ind in sel_time_ind]
     
     # Plot streamflow
     ax0 = fig.add_subplot(gs[0,:])
     ax0.plot(timesteps, Q, color='k')
-    ax0.set(title='Streamflow', ylabel='m3/d', xlabel='Time')
+    ax0.set(title='Streamflow', ylabel='mm/d')
 
     ax1 = fig.add_subplot(gs[1, 0])
     ax2 = fig.add_subplot(gs[1, 1])
@@ -463,53 +468,27 @@ def plot_PQET_ST_selected(
     
     # Plot SAS
     num_lines = len(sel_time_ind)
-    cmap = cm.get_cmap('plasma', num_lines)
+    cmap = cm.get_cmap('brg', num_lines)
     colors = [cmap(i) for i in range(num_lines)]
+    for i in range(1,last_age_cut+1):
+        ax1.plot(ST[:,-i], PQ[:,-i], color='grey', alpha=0.05)
+        ax3.plot(ST[1:,-i], ωQ[:,-i], color='grey', alpha=0.05)
+        ax2.plot(ST[:,-i], PET[:,-i], color='grey', alpha=0.05)
+        ax4.plot(ST[1:,-i], ωET[:,-i], color='grey', alpha=0.05) 
     for i,it in enumerate(sel_time_ind):
         color = colors[i]
-        ax0.axvline(x=timesteps[it], color=color, alpha=0.5)
-        ax1.plot(ST[:,it], PQ[:,it], color=color, alpha=0.5)
-        ax2.plot(ST[1:,it], ωQ[:,it], color=color, alpha=0.5)
-        ax3.plot(ST[:,it], PET[:,it], color=color, alpha=0.5)
-        ax4.plot(ST[1:,it], ωET[:,it], color=color, alpha=0.5)
-    ax1.set(title=label, xlabel=r'$S_T$', ylabel=r'$P_Q$')
-    ax2.set(xlabel=r'$S_T$', ylabel=r'$\omega_{Q}$')
-    ax3.set(title=label, xlabel=r'$S_T$', ylabel=r'$P_{ET}$')
-    ax4.set(xlabel=r'$S_T$', ylabel=r'$\omega_{ET}$')
+        ax0.axvline(x=timesteps[it], color=color, alpha=0.7)
+        ax1.plot(ST[:,it], PQ[:,it], color=color, alpha=0.7)
+        ax3.plot(ST[1:,it], ωQ[:,it], color=color, alpha=0.7)
+        ax2.plot(ST[:,it], PET[:,it], color=color, alpha=0.7)
+        ax4.plot(ST[1:,it], ωET[:,it], color=color, alpha=0.7)
+    ax1.set(title=label, xlabel=r'$S_T$ [mm]', ylabel=r'$P_Q$')
+    ax3.set(xlabel=r'$S_T$ [mm]', ylabel=r'$\omega_{Q}$')
+    ax2.set(title=label, xlabel=r'$S_T$ [mm]', ylabel=r'$P_{ET}$')
+    ax4.set(xlabel=r'$S_T$ [mm]', ylabel=r'$\omega_{ET}$')
     
     return axes
 
-# def plot_PQET_ST3(Q, ET, pQETs, sT, dt=1.0, axes=None, figsize=None):
-#     assert sT.shape[0] == pQETs.shape[0]
-#     assert sT.shape[1] == pQETs.shape[0]+1
-
-#     pQ = pQETs[...,0]
-#     pET = pQETs[...,1]
-#     PQ = jnp.cumsum(pQ, axis=0) * dt
-#     PET = jnp.cumsum(pET, axis=0) * dt
-#     ST = jnp.cumsum(sT[:,1:], axis=0) * dt
-#     S = ST[-1,:]
-
-#     ωQ = (PQ[1:,:] - PQ[:-1,:]) / (ST[1:,:] - ST[:-1,:])
-#     ωET = (PET[1:,:] - PET[:-1,:]) / (ST[1:,:] - ST[:-1,:])
-
-#     if figsize is None:
-#         figsize = (10,12)
-
-#     if axes is None:
-#         fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=True)
-    
-#     for i in range(1,last_age_cut+1):
-#         axes[0,0].plot(ST[:,-i], PQ[:,-i], color='grey', alpha=0.5)
-#         axes[1,0].plot(ST[:,-i], PET[:,-i], color='grey', alpha=0.5)
-#         axes[0,1].plot(ST[:,-i], pQ[:,-i], color='grey', alpha=0.5)
-#         axes[1,1].plot(ST[:,-i], pET[:,-i], color='grey', alpha=0.5)
-#     axes[0,0].set(title=label, ylabel=r'$\Omega_Q$')
-#     axes[1,0].set(xlabel=r'$S_T$', ylabel=r'$\Omega_{ET}$')
-#     axes[0,1].set(title=label, ylabel=r'$\omega_Q$')
-#     axes[1,1].set(xlabel=r'$S_T$', ylabel=r'$\omega_{ET}$')
-
-#     return axes
 
 def plot_young_water(
     pQ, timesteps, cutoff_age=100, dt=1., axes=None, figsize=None, label=''
@@ -541,7 +520,219 @@ def plot_young_water(
     ax = axes[1]
     ax.plot(timesteps, weighted_pQ_young, 'k')
     ax.set(title=f'Mean age of young water (smaller than {max_young_age} days) ({label})', 
-           ylabel='[Day]', xlabel='Time')
+           ylabel='[Day]')
 
     return axes
 
+
+def plot_flow_transport_assessment(
+    Q, Q_sim, C_Q, C_Q_sim, pQ, timesteps,
+    sim_label='Simulation', obs_label='Observation',
+    varn_c='Tracer', Q_units='[mm d-1]', C_units='[-]', 
+    sel_time_ind=None, last_age_cut=500, dt=1.0, 
+    cutoff_age=100, cutoff_time=None, figsize=None,
+):
+    # Create figure and grid spec
+    if figsize is None:
+        figsize = (16,12)
+    fig = plt.figure(figsize=figsize)
+    gs = gridspec.GridSpec(3, 2, height_ratios=[1, 1, 1], hspace=0.3, wspace=0.2)
+
+    # Top two layered subplots (share the same position)
+    ax1 = fig.add_subplot(gs[0, :])  # Span both columns
+    ax2 = fig.add_subplot(gs[1, :], sharex=ax1,)  # Overlayed plot
+
+    # Bottom two side-by-side subplots
+    ax3 = fig.add_subplot(gs[2, 0])
+    ax4 = fig.add_subplot(gs[2, 1])
+
+    # Plot streamflow simulation
+    metrics = compute_metrics(Q_sim, Q, True)
+    rmse, nse = metrics['rmse'], metrics['nse']
+    ax1 = plot_timeseries(
+        Q, timesteps=timesteps, ax=ax1, title=None,
+        label=obs_label, ylabel=Q_units, linestyle='.', color='k'
+    )
+    ax1 = plot_timeseries(
+        Q_sim, timesteps=timesteps, ax=ax1, 
+        title=f'Flow simulation by LSTM (RMSE: {rmse:.2f}; NSE: {nse:.2f})',
+        label=sim_label, ylabel=Q_units, alpha=0.7, color='tab:blue'
+    )
+    ax1.set(xlabel='')
+    ax1.legend()
+
+    # Plot transport simulation
+    metrics = compute_metrics(C_Q_sim, C_Q, True)
+    rmse, nse = metrics['rmse'], metrics['nse']
+    ax2 = plot_timeseries(
+        C_Q, timesteps=timesteps, ax=ax2, title=None,
+        label=obs_label, ylabel=C_units, linestyle='.', color='k'
+    )
+    ax2 = plot_timeseries(
+        C_Q_sim, timesteps=timesteps, ax=ax2, 
+        title=f'{varn_c} concentration simulation by hybrid SAS model (RMSE: {rmse:.2f}; NSE: {nse:.2f})',
+        label=sim_label, ylabel=C_units, alpha=0.7, color='tab:blue'
+    )
+    ax2.set(xlabel='')
+    ax2.legend()
+
+    # Plot TTD for Q
+    PQ = jnp.cumsum(pQ, axis=0) * dt
+    if sel_time_ind is None:
+        if cutoff_time is None:
+            nt_cut = int(Q.size * 0.5)
+        else:
+            nt_cut = cutoff_time
+        nt = Q.size
+        nt_res_mid = int((nt - nt_cut)/2)
+        Q2 = Q[nt_cut:]
+        sel_time_ind = jnp.argsort(Q2)[:2].tolist() + \
+            jnp.argsort(Q2)[nt_res_mid:nt_res_mid+2].tolist() + \
+            jnp.argsort(Q2)[-2:].tolist()
+        sel_time_ind = [ind+nt_cut for ind in sel_time_ind]
+    num_lines = len(sel_time_ind)
+    cmap = cm.get_cmap('brg', num_lines)
+    colors = [cmap(i) for i in range(num_lines)]
+    for i in range(1,last_age_cut+1):
+        ax3.plot(PQ[:,-i], color='grey', alpha=0.05)
+    for i,it in enumerate(sel_time_ind):
+        color = colors[i]
+        ax1.axvline(x=timesteps[it], linewidth=3, color=color, alpha=0.7)
+        ax2.axvline(x=timesteps[it], linewidth=3, color=color, alpha=0.7)
+        ax3.plot(PQ[:,it], color=color, linewidth=3, alpha=0.7)
+    ax3.set(title='Transit time distribution $P_Q$', xlabel=r'Age $T$ [d]', ylabel=r'$P_Q$')
+
+    # Plot young water age
+    if cutoff_time is None:
+        cutoff_time = int(Q.size * 0.5)
+    max_young_age = cutoff_age * dt
+    PQ_young_fraction = PQ[cutoff_age,:]
+    ax1.axvline(x=timesteps[cutoff_time], linewidth=5, linestyle='--', color='k', alpha=.7)
+    ax2.axvline(x=timesteps[cutoff_time], linewidth=5, linestyle='--', color='k', alpha=.7)
+    ax4.plot(timesteps[cutoff_time:], PQ_young_fraction[cutoff_time:], 'k')
+    for i,it in enumerate(sel_time_ind):
+        color = colors[i]
+        ax4.axvline(x=timesteps[it], linewidth=3, color=color, alpha=0.7)
+    ax4.set(title=f'Young water fraction with age smaller than {max_young_age} days', 
+           ylabel='[-]',ylim=[0, 1],xlim=[timesteps[nt_cut],timesteps[-1]])
+        
+    return [ax1, ax2, ax3, ax4]
+
+
+def plot_flow_transport_assessment2(
+    sT, Q, Q_sim, C_Q, C_Q_sim, pQ, timesteps,
+    sim_label='Simulation', obs_label='Observation',
+    varn_c='Tracer', Q_units='[mm d-1]', C_units='[-]', 
+    sel_time_ind=None, last_age_cut=500, dt=1.0, 
+    cutoff_age=100, cutoff_time=None, figsize=None,
+):
+    # Create figure and grid spec
+    if figsize is None:
+        figsize = (16,20)
+    fig = plt.figure(figsize=figsize)
+    gs = gridspec.GridSpec(4, 2, height_ratios=[1, 1, 1, 1], hspace=0.3, wspace=0.2)
+
+    # Top two layered subplots (share the same position)
+    ax1 = fig.add_subplot(gs[0, :])  # Span both columns
+    ax2 = fig.add_subplot(gs[1, :], sharex=ax1,)  # Overlayed plot
+
+    # Bottom two side-by-side subplots
+    ax3 = fig.add_subplot(gs[2, 0])
+    ax4 = fig.add_subplot(gs[2, 1])
+    ax5 = fig.add_subplot(gs[3, 0])
+    ax6 = fig.add_subplot(gs[3, 1])
+
+    # Plot streamflow simulation
+    metrics = compute_metrics(Q_sim, Q, True)
+    rmse, nse = metrics['rmse'], metrics['nse']
+    ax1 = plot_timeseries(
+        Q, timesteps=timesteps, ax=ax1, title=None,
+        label=obs_label, ylabel=Q_units, linestyle='.', color='k'
+    )
+    ax1 = plot_timeseries(
+        Q_sim, timesteps=timesteps, ax=ax1, 
+        title=f'Flow simulation by LSTM (RMSE: {rmse:.2f}; NSE: {nse:.2f})',
+        label=sim_label, ylabel=Q_units, alpha=0.7, color='tab:blue'
+    )
+    ax1.set(xlabel='')
+    ax1.legend()
+
+    # Plot transport simulation
+    metrics = compute_metrics(C_Q_sim, C_Q, True)
+    rmse, nse = metrics['rmse'], metrics['nse']
+    ax2 = plot_timeseries(
+        C_Q, timesteps=timesteps, ax=ax2, title=None,
+        label=obs_label, ylabel=C_units, linestyle='.', color='k'
+    )
+    ax2 = plot_timeseries(
+        C_Q_sim, timesteps=timesteps, ax=ax2, 
+        title=f'{varn_c} concentration simulation by hybrid SAS model (RMSE: {rmse:.2f}; NSE: {nse:.2f})',
+        label=sim_label, ylabel=C_units, alpha=0.7, color='tab:blue'
+    )
+    ax2.set(xlabel='')
+    ax2.legend()
+
+    # Plot TTDs for Q
+    PQ = jnp.cumsum(pQ, axis=0) * dt
+    if sel_time_ind is None:
+        if cutoff_time is None:
+            nt_cut = int(Q.size * 0.5)
+        else:
+            nt_cut = cutoff_time
+        nt = Q.size
+        nt_res_mid = int((nt - nt_cut)/2)
+        Q2 = Q[nt_cut:]
+        sel_time_ind = jnp.argsort(Q2)[:2].tolist() + \
+            jnp.argsort(Q2)[nt_res_mid:nt_res_mid+2].tolist() + \
+            jnp.argsort(Q2)[-2:].tolist()
+        sel_time_ind = [ind+nt_cut for ind in sel_time_ind]
+    num_lines = len(sel_time_ind)
+    cmap = cm.get_cmap('brg', num_lines)
+    colors = [cmap(i) for i in range(num_lines)]
+
+    # Plot PQ versus ST
+    ST = jnp.cumsum(sT[:,1:], axis=0) * dt
+    for i in range(1,last_age_cut+1):
+        ax3.plot(ST[:,-i], PQ[:,-i], color='grey', alpha=0.05)
+    for i,it in enumerate(sel_time_ind):
+        color = colors[i]
+        ax3.plot(ST[:,it], PQ[:,it], color=color, linewidth=3, alpha=0.7)
+    ax3.set(title='$P_Q$ versus $S_T$', xlabel=r'$S_T$ [mm]', ylabel=r'$P_Q$')
+
+    # Plot QT versus ST
+    S = ST[-1,:]
+    QT = jax.vmap(lambda a,b: a*b, in_axes=(0,1), out_axes=1)(Q, PQ)
+    STC = jax.vmap(lambda a,b: a-b, in_axes=(0,1), out_axes=1)(S, ST)
+    QTC = jax.vmap(lambda a,b: a-b, in_axes=(0,1), out_axes=1)(Q, QT)
+    for i in range(1,last_age_cut+1):
+        ax4.plot(STC[:,-i], QTC[:,-i], color='grey', alpha=0.05)
+    for i,it in enumerate(sel_time_ind):
+        color = colors[i]
+        ax4.plot(STC[:,it], QTC[:,it], color=color, linewidth=3, alpha=0.7)
+    ax4.set(title=r'$\bar{Q_T}$ versus $\bar{S_T}$', xlabel=r'$\bar{S_T}$ [mm]', ylabel=r'$\bar{Q_T}$ [mm]')
+
+    # Plot PQ versus T
+    for i in range(1,last_age_cut+1):
+        ax5.plot(PQ[:,-i], color='grey', alpha=0.05)
+    for i,it in enumerate(sel_time_ind):
+        color = colors[i]
+        ax1.axvline(x=timesteps[it], linewidth=3, color=color, alpha=0.7)
+        ax2.axvline(x=timesteps[it], linewidth=3, color=color, alpha=0.7)
+        ax5.plot(PQ[:,it], color=color, linewidth=3, alpha=0.7)
+    ax5.set(title='$P_Q$ versus $T$', xlabel=r'Age $T$ [d]', ylabel=r'$P_Q$')
+
+    # Plot young water age
+    if cutoff_time is None:
+        cutoff_time = int(Q.size * 0.5)
+    max_young_age = cutoff_age * dt
+    PQ_young_fraction = PQ[cutoff_age,:]
+    ax1.axvline(x=timesteps[cutoff_time], linewidth=5, linestyle='--', color='k', alpha=.7)
+    ax2.axvline(x=timesteps[cutoff_time], linewidth=5, linestyle='--', color='k', alpha=.7)
+    ax6.plot(timesteps[cutoff_time:], PQ_young_fraction[cutoff_time:], 'k')
+    for i,it in enumerate(sel_time_ind):
+        color = colors[i]
+        ax6.axvline(x=timesteps[it], linewidth=3, color=color, alpha=0.7)
+    ax6.set(title=f'Young water fraction with age smaller than {max_young_age} days', 
+           ylabel='[-]',ylim=[0, 1],xlim=[timesteps[nt_cut],timesteps[-1]])
+        
+    return [ax1, ax2, ax3, ax4, ax5, ax6]

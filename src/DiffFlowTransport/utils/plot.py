@@ -14,6 +14,8 @@ import matplotlib.dates as mdates
 import matplotlib.gridspec as gridspec
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 from .metrics import compute_metrics
 
@@ -490,6 +492,63 @@ def plot_PQET_ST_selected(
     return axes
 
 
+def plot_PQET_ST_esspi(
+    Q, pQ, sT, timesteps, Q_units='[mm d-1]', sel_time_ind='default',
+    dt=1.0, last_age_cut=500, axes=None, figsize=None, label=''
+):
+    assert sT.shape[0] == pQ.shape[0]
+    assert sT.shape[1] == pQ.shape[1]+1
+
+    PQ = jnp.cumsum(pQ, axis=0) * dt
+    ST = jnp.cumsum(sT[:,1:], axis=0) * dt
+    S = ST[-1,:]
+
+    ωQ = (PQ[1:,:] - PQ[:-1,:]) / (ST[1:,:] - ST[:-1,:])
+    ωQ = jnp.nan_to_num(ωQ, nan=0.0, posinf=0.0, neginf=0.0)
+
+    if figsize is None:
+        figsize = (10,12)
+
+    if axes is None:
+        fig = plt.figure(figsize=(10, 10))
+        gs = gridspec.GridSpec(3, 2, height_ratios=[0.5, 1, 1], hspace=0.3, wspace=0.3)
+    
+    if sel_time_ind == 'default':
+        nt, nt_cut = Q.size, 0
+        nt_res_mid = int((nt - nt_cut)/2)
+        Q2 = Q[nt_cut:]
+        sel_time_ind = jnp.argsort(Q2)[:2].tolist() + \
+            jnp.argsort(Q2)[nt_res_mid:nt_res_mid+2].tolist() + \
+            jnp.argsort(Q2)[-2:].tolist()
+        sel_time_ind = [ind+nt_cut for ind in sel_time_ind]
+        num_lines = len(sel_time_ind)
+        cmap = cm.get_cmap('brg', num_lines)
+        colors = [cmap(i) for i in range(num_lines)]
+    
+    # Plot streamflow
+    ax0 = fig.add_subplot(gs[0,:])
+    ax0 = plot_timeseries(
+        Q, timesteps=timesteps, ax=ax0, title=None,
+        label='Observation', ylabel=f'$Q$ {Q_units}', linestyle='.', color='k'
+    )
+    ax0.set(title='$Q$', xlabel='')
+
+    # Plot TTDs
+    ax1 = fig.add_subplot(gs[1:, :])
+    
+    # Plot SAS
+    for i in range(1,last_age_cut+1):
+        ax1.plot(PQ[:,-i], color='grey', alpha=0.05)
+    if sel_time_ind is not None:
+        for i,it in enumerate(sel_time_ind):
+            color = colors[i]
+            ax0.axvline(x=timesteps[it], color=color, alpha=0.7)
+            ax1.plot(PQ[:,it], color=color, alpha=0.7)
+    ax1.set(title='Transit time distribution', xlabel=r'$T$ [d]', ylim=[-0.05,1.1], ylabel=r'$P_Q$')
+    
+    return [ax0, ax1]
+
+
 def plot_young_water(
     pQ, timesteps, cutoff_age=100, dt=1., axes=None, figsize=None, label=''
 ):
@@ -523,6 +582,78 @@ def plot_young_water(
            ylabel='[Day]')
 
     return axes
+
+
+def plot_flow_transport_assessment_esspi(
+    J, Q, C_J, C_Q, timesteps,
+    Q_sim=None, C_Q_sim=None,
+    sim_label='Simulation', obs_label='Observation',
+    varn_c='Tracer', Q_units='[mm d-1]', C_units='[-]', 
+    figsize=None,
+):
+    # Create figure and grid spec
+    if figsize is None:
+        figsize = (10,12)
+    fig = plt.figure(figsize=figsize)
+    gs = gridspec.GridSpec(2, 2, height_ratios=[1, 1], hspace=0.2, wspace=0.2)
+
+    # Top two layered subplots (share the same position)
+    ax1 = fig.add_subplot(gs[0, :])  # Span both columns
+    ax2 = fig.add_subplot(gs[1, :], sharex=ax1,)  # Overlayed plot
+
+    # Plot streamflow simulation
+    ax1 = plot_timeseries(
+        Q, timesteps=timesteps, ax=ax1, title=None,
+        label=obs_label, ylabel=f'$Q$ {Q_units}', linestyle='.', color='k'
+    )
+    ax1b = ax1.twinx()
+    ax1b = plot_timeseries(
+        J, timesteps=timesteps, ax=ax1b, title=None,
+        label=obs_label, ylabel=f'$J$ {Q_units}', linestyle='.', color='lightblue'
+    )
+    ax1b.set(ylim=[J.max()*2.0, 0])
+    ax1b.set_ylabel(f'$J$ {Q_units}', color="lightblue")
+    ax1b.tick_params(axis='y', colors='lightblue')
+    if Q_sim is not None:
+        metrics = compute_metrics(Q_sim, Q, True)
+        rmse, nse = metrics['rmse'], metrics['nse']
+        print(f'RMSE: {rmse:.2f}; NSE: {nse:.2f}')
+        ax1 = plot_timeseries(
+            Q_sim, timesteps=timesteps, ax=ax1, 
+            # title=f'Flow simulation (RMSE: {rmse:.2f}; NSE: {nse:.2f})',
+            label=sim_label, ylabel=f'$Q$ {Q_units}', alpha=0.7, color='tab:blue'
+        )
+        ax1.legend(loc='center left')
+    ax1.set(xlabel='', title='Water quantity', ylim=[np.nanmin(Q)*0.8, np.nanmax(Q)*1.3])
+
+    # Plot transport simulation
+    # C_Q = Q * C_Q
+    ax2 = plot_timeseries(
+        C_Q, timesteps=timesteps, ax=ax2, title=None,
+        label=obs_label, ylabel=r'$C_Q$ ' + f'{C_units}', linestyle='.', color='k'
+    )
+    ax2b = ax2.twinx()
+    ax2b = plot_timeseries(
+        C_J, timesteps=timesteps, ax=ax2b, title=None,
+        label=obs_label, ylabel=r'$C_J$ ' + f'{C_units}', linestyle='.', color='lightblue'
+    )
+    ax2b.set(ylim=[J.max()*2.0, 0])
+    ax2b.set_ylabel(r'$C_J$ ' + f'{C_units}', color="lightblue")
+    ax2b.tick_params(axis='y', colors='lightblue')
+    if C_Q_sim is not None:
+        # C_Q_sim = Q_sim * C_Q_sim
+        metrics = compute_metrics(C_Q_sim, C_Q, True)
+        rmse, nse = metrics['rmse'], metrics['nse']
+        print(f'RMSE: {rmse:.2f}; NSE: {nse:.2f}')
+        ax2 = plot_timeseries(
+            C_Q_sim, timesteps=timesteps, ax=ax2, 
+            # title=f'{varn_c} concentration simulation by hybrid SAS model (RMSE: {rmse:.2f}; NSE: {nse:.2f})',
+            label=sim_label, ylabel=r'$C_Q$ ' + f'{C_units}', alpha=0.7, color='tab:blue'
+        )
+        ax2.legend(loc='center left')
+    ax2.set(xlabel='', title=f'{varn_c} concentration', ylim=[np.nanmin(C_Q)*0.8, np.nanmax(C_Q)*1.3])
+        
+    return [ax1, ax1b, ax2, ax2b]
 
 
 def plot_flow_transport_assessment(
@@ -615,6 +746,32 @@ def plot_flow_transport_assessment(
         ax4.axvline(x=timesteps[it], linewidth=3, color=color, alpha=0.7)
     ax4.set(title=f'Young water fraction with age smaller than {max_young_age} days', 
            ylabel='[-]',ylim=[0, 1],xlim=[timesteps[nt_cut],timesteps[-1]])
+    
+    # Create a colorbar for the lines
+    listed_cmap = mcolors.ListedColormap(colors)
+    norm = mcolors.Normalize(vmin=0, vmax=num_lines - 1)
+    sm = plt.cm.ScalarMappable(cmap=listed_cmap, norm=norm)
+    sm.set_array([])
+
+    # Use make_axes_locatable to create a new axis below ax_main
+    # divider = make_axes_locatable(ax3)
+    # cax = divider.append_axes("bottom", size="5%", pad=10)
+    # Add an inset axis for the colorbar, relative to the main axis
+    cax = inset_axes(ax3,
+                    width="80%",   # width relative to parent axis
+                    height="50%",   # height relative to parent axis
+                    loc='lower center',
+                    bbox_to_anchor=(0.1, -0.5, 0.8, 0.1),  # (x0, y0, width, height) in axis coords
+                    bbox_transform=ax3.transAxes,
+                    borderpad=0)
+
+    # Add horizontal colorbar to this new axis
+    cbar = fig.colorbar(sm, cax=cax, orientation='horizontal')
+    cbar.set_ticks([])
+
+    # Add labels to both ends
+    cax.text(0, -1.5, 'Low Flow', va='center', ha='left', transform=cax.transAxes, fontsize=15)
+    cax.text(1, -1.5, 'High Flow', va='center', ha='right', transform=cax.transAxes, fontsize=15)
         
     return [ax1, ax2, ax3, ax4]
 

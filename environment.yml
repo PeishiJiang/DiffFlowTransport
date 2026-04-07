@@ -1,4 +1,6 @@
 name: nn-flow-transport
+channels:
+  - conda-forge
 dependencies:
   - numpy
   - pandas
@@ -8,3 +10,13 @@ dependencies:
   - matplotlib
   - ipykernel
   - mesas
+  - pip
+  - pip:
+    - hydroeval
+    - pytest
+    - jax[cuda12]
+    - optax
+    - equinox
+    - tqdm
+    - torch
+    - torchvision

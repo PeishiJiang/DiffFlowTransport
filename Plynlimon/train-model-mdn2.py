@@ -1,62 +1,82 @@
 # %%
+import os
+import argparse
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 import jax
 import jax.numpy as jnp
+import jax.tree_util as jtu
+
+import equinox as eqx
 
 import optax
 
 from DiffFlowTransport.transport import SASTransport
 from DiffFlowTransport.flow import LSTM
+from DiffFlowTransport.sas import initialize_sas_model, get_sas_inputs, get_sas_inputs_amount
 from DiffFlowTransport.utils import scale_df, make_pytorch_timeseries_dataloader
 from DiffFlowTransport.utils import get_transport_obs_fluxes
-from DiffFlowTransport.utils import train_flow_model, train_transport_model, mse
-from DiffFlowTransport.sas import initialize_sas_model
-from DiffFlowTransport.sas import get_sas_inputs, get_sas_inputs_amount
-from DiffFlowTransport.model import save_model
+from DiffFlowTransport.utils import train_flow_model, train_transport_model, mse, predict_dl
+from DiffFlowTransport.model import load_model, save_model
 
+# Get arguments from user's inputs
+parser = argparse.ArgumentParser()
 
-# %% [markdown]
-# # General configurations
+parser.add_argument("--couplingtype", type=int, default=4)
+parser.add_argument("--randomseed", type=int, default=42)
+parser.add_argument("--sasmlpdepth", type=int, default=2)
+parser.add_argument("--sasmlpwidth", type=int, default=10)
+parser.add_argument("--cudadevice", type=str, default="0")
+parser.add_argument("--epochs", type=int, default=500)
 
-# %%
-# Watershed
-watershed_name = 'OakCreek'
+args = parser.parse_args()
 
-# Data option
-data_option = 'withDiffusion'
+coupling_type = args.couplingtype
+randomseed = args.randomseed
+mlp_depth = args.sasmlpdepth
+mlp_width = args.sasmlpwidth
+device = args.cudadevice
+epochs = args.epochs
 
-# The flow and transport model coupling type
-flow_transport_coupling_type = 3
-
-# Label
-model_label = f'mdn-one_gamma-couplingtype{flow_transport_coupling_type}'
-
+# Specify which GPU to use # TODO
+os.environ["CUDA_VISIBLE_DEVICES"] = device
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "1.0"
 
 # %% [markdown]
 # # Read the data
 
 # %%
-# f_data = f'./data_{data_option}.csv'
-f_data = f'./data_{data_option}_withSpinup.csv'
+f_data = './data-agg.csv'
 df = pd.read_csv(f_data, index_col=0)
 df.index = pd.to_datetime(df.index)
-df.head()
+# df = pd.read_csv(f_data, index_col=1)
+# df.index = pd.to_datetime(df.index, format='%m/%d/%y')
 
 # %% [markdown]
 # # Parameters
+
+# %%
+# The flow and transport model coupling type
+flow_transport_coupling_type = coupling_type
+
+# Watershed
+watershed_name = 'Plynlimon'
+
+# Label
+if randomseed == 42 and mlp_depth == 2 and mlp_width == 10:
+    model_label = f'mdn2-couplingtype{flow_transport_coupling_type}-logQ'
+else:
+    model_label = f'mdn2-couplingtype{flow_transport_coupling_type}-logQ-rd{randomseed}-mlpd{mlp_depth}-mlpw{mlp_width}'
+
 
 # %% [markdown]
 # ## Flow model configuration
 
 # %%
-flow_inputs = ['P2', 'Tair', 'SWIN']
-# flow_inputs = ['P2']
+flow_inputs = ['J', 'Ta', 'Rn']
 flow_outputs = ['Q']
-
 flow_params = {
     "n_input": len(flow_inputs),
     "n_output": len(flow_outputs),
@@ -67,14 +87,12 @@ flow_params = {
 # Skip the first several days
 cutoff_length = 365
 
-
 # %% [markdown]
 # ## Transport model configuration
 
 # %%
 # Number of SAS inputs depends on the coupling type
 n_sas_input = get_sas_inputs_amount(flow_transport_coupling_type, flow_params['n_hidden'])
-    
 
 # %%
 transport_params = {
@@ -84,27 +102,28 @@ transport_params = {
         "α_ET": 0.,
         "k1": [0.],
         "C_eq": [0.],
-        "C_Q_old": [0.],
-        # "τ_max": 4000,
-        # "C_Q_old": [np.mean(C_J_cut * J_cut) / Q_cut.mean()]
+        # "C_Q_old": [0.],
+        # "C_Q_old": [jnp.mean(C_J * J) / Q.mean() / (1-0.26)]
+        # "C_Q_old": [jnp.mean(C_J * J) / Q.mean() * (1-0.26)]
+        # "C_Q_old": [jnp.mean(C_J * J) / Q.mean()]
+        "C_Q_old": [6.]
     },
     "sas_specs": {
         "Q SAS fun": {
-            "func": "GammaMDN",
+            "func": "MDN2",
             "args": {
-                "scale": 4000.0,
+                "scale": 8215.0,
                 "n_input": n_sas_input,  # Same as the number of hidden states used in the flow LSTM model
-                "n_hidden": 10,
-                "n_mixture": 1,
-                "key": 42,
-                "width_size": 10,
-                "depth": 2
+                "n_hidden": mlp_width,
+                "key": randomseed,
+                "width_size": mlp_width,
+                "depth": mlp_depth
             }
         },
         "ET SAS fun": {
             "func": "Uniform",
             "args": {
-                "scale": 400.0
+                "scale": 737.0
             }
         }
     }
@@ -116,6 +135,8 @@ transport_params = {
 
 # %%
 flow_dl_config = {
+    # "targets": ['Q'],
+    # "features": ['J'],
     "targets": flow_outputs,
     "features": flow_inputs,
     "sequence_length": cutoff_length,
@@ -126,12 +147,16 @@ flow_dl_config = {
 # %%
 train_config = {
     "learning_rate": 0.01,
-    "epochs": 200,
-    "train_start": '2015-10-01',
-    "train_end": '2020-09-30',
-    "test_start": '2021-10-01',
-    "test_end": '2023-12-28',
-    "scaler_type": "minmax"
+    "epochs": epochs,
+    "train_start": '1989-01-01',
+    "train_end": '1998-12-31',
+    "test_start": '1999-01-01',
+    "test_end": '2008-12-31',
+    "scaler_configs":{ # TODO
+        "scaler_type": "minmax",
+        "logQ": True,
+        "Q_sym": "Q"
+    }
 }
 
 
@@ -158,17 +183,9 @@ flow_model = LSTM(**flow_params)
 train_start, train_end = train_config['train_start'], train_config['train_end']
 test_start, test_end = train_config['test_start'], train_config['test_end']
 
-scaler, df_norm = scale_df(df, train_config['scaler_type'])
+scaler, df_norm = scale_df(df, **train_config['scaler_configs'])
 df_norm_train = df_norm.loc[train_start:train_end].copy()
 df_norm_test = df_norm.loc[test_start:test_end].copy()
-
-
-# %%
-train_start_ind = df.index.get_loc(train_start)
-train_end_ind = df.index.get_loc(train_end)
-test_start_ind = df.index.get_loc(test_start)
-test_end_ind = df.index.get_loc(test_end)
-
 
 # %% [markdown]
 # ## Optimizer
@@ -199,7 +216,7 @@ test_loader = make_pytorch_timeseries_dataloader(
 all_loader = make_pytorch_timeseries_dataloader(
     df_norm, **flow_dl_config, shuffle=False
 )
-next(iter(train_loader));
+
 
 # %% [markdown]
 # ## Train the flow model
@@ -207,6 +224,7 @@ next(iter(train_loader));
 # %%
 flow_model_new, loss_train_flow, loss_test_flow = train_flow_model(
     flow_model, train_config['epochs'], mse, optim, train_loader, test_loader
+    # flow_model, 10, mse, optim, train_loader, test_loader
 )
 
 # %% [markdown]
@@ -217,11 +235,10 @@ flow_model_new, loss_train_flow, loss_test_flow = train_flow_model(
 
 # %%
 # TODO: skip the initial days with sequence length used by LSTM model
+cutoff_length = flow_dl_config['sequence_length']
 df_cut = df.iloc[cutoff_length:]
-dt = transport_params['transport_specs']['dt']
 J, Q, ET, C_J, C_Q_J, time = get_transport_obs_fluxes(df_cut, watershed_name)
-τ_max = J.size if transport_model.τ_max is None else transport_model.τ_max
-sTmT_init = jnp.zeros([τ_max, 2])
+sTmT_init = jnp.zeros([J.size, 2])
 
 
 # %%
@@ -234,6 +251,12 @@ sas_Q_args, sas_ET_args = get_sas_inputs(flow_transport_coupling_type, Q, ET, fl
 mask = jnp.where(~jnp.isnan(C_Q_J))
 x = [J, C_J, Q, ET, sTmT_init, sas_Q_args, sas_ET_args, mask]
 y = C_Q_J[mask][:,None]
+
+# %%
+train_start_ind = df_cut.index.get_loc(train_start)
+train_end_ind = df_cut.index.get_loc(train_end)
+test_start_ind = df_cut.index.get_loc(test_start)
+test_end_ind = df_cut.index.get_loc(test_end)
 
 # Traing data
 # During training, we run the model until the end of the training period
@@ -260,15 +283,6 @@ transport_model_new, loss_train_transport, loss_test_transport = train_transport
     transport_model, train_config['epochs'], mse, optim, x_train, y_train, x_test, y_test
 )
 
-# %% [markdown]
-# ## Make predictions
-
-# %%
-# Run the trained model
-sT, mT, mQETs, pQETs, mRs, C_Q = transport_model_new(
-    J, C_J, Q, ET, sTmT_init, sas_Q_args, sas_ET_args
-)
-df_cut['C_Q pred'] = C_Q
 
 # %% [markdown]
 # # Save the models
@@ -277,7 +291,7 @@ df_cut['C_Q pred'] = C_Q
 f_flow = f'flow_model_{model_label}.eqx'
 f_transport = f'transport_model_{model_label}.eqx'
 f_configs = f'configs-{model_label}.json'
-dir_models = Path(f'models-{data_option}')
+dir_models = Path(f'models-rev2')
 
 
 # %%
@@ -304,5 +318,3 @@ configs = {
 
 # %%
 save_model(configs, flow_model_new, transport_model_new, f_configs, dir_models)
-
-

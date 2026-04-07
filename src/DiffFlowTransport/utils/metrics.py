@@ -42,12 +42,11 @@ def compute_metrics(
     beta = mkge_all[2]
     alpha = mkge_all[3]
     nse = he.evaluator(he.nse, pred, true)[0]
-    r2 = r2_score(pred, true)
-    # try:
-    # except:
-    #     print(pred.mean(), pred.max(), pred.min(), np.isnan(true).sum())
-    #     print(true.mean(), true.max(), true.min(), np.isnan(true).sum())
-    #     raise Exception("Wrong.")
+    try:
+        r2 = r2_score(pred, true)
+    except:
+        r2 = np.nan
+
     return {
         "rse": rse,
         "mare": mare,

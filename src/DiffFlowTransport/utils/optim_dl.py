@@ -3,10 +3,10 @@
 # Author: Peishi Jiang
 # Email: shixijps@gmail.com
 
+import optax
 import jax
 import jax.tree_util as jtu
 
-import optax
 import equinox as eqx
 import jax.numpy as jnp
 
@@ -14,6 +14,52 @@ from torch.utils.data import DataLoader
 
 from typing import Callable
 from jaxtyping import PyTree
+
+
+# ---------------------------
+# Early stopping class
+# ---------------------------
+class EarlyStopping:
+    def __init__(self, patience=10, min_delta=1e-3):
+        self.patience = patience
+        self.min_delta = min_delta  # relative improvement threshold
+
+        self.best_loss = jnp.inf
+        self.counter = 0
+        self.best_model = None
+
+    def update(self, val_loss, model):
+        # ---- NaN / Inf check ----
+        if jnp.isnan(val_loss) or jnp.isinf(val_loss):
+            print("Early stopping: NaN or Inf detected")
+            return True
+
+        # First step
+        if self.best_loss == jnp.inf:
+            self.best_loss = val_loss
+            self.best_model = jtu.tree_map(lambda x: x, model)
+            return False
+
+        # Relative improvement
+        rel_improve = (self.best_loss - val_loss) / (jnp.abs(self.best_loss) + 1e-8)
+
+        if rel_improve > self.min_delta:
+            self.best_loss = val_loss
+            self.counter = 0
+            self.best_model = jtu.tree_map(lambda x: x, model)
+            return False
+        else:
+            self.counter += 1
+            return self.counter >= self.patience
+
+    def restore(self, model):
+        if self.best_model is not None:
+            model = self.best_model
+        return model
+
+
+# Initialize the early stopper
+early_stopper = EarlyStopping(patience=50, min_delta=1e-3)
 
 
 def train_flow_model(
@@ -48,11 +94,20 @@ def train_dl(
         # Evaluate the model on the test data
         if testloader is not None:
             loss_value_test = evaluate_dl(model, testloader, loss_func)
+        
+        # Check early stopping
+        stop = early_stopper.update(loss_value_test, model)
+        if stop:
+            print(f"Early stopping at epoch {step}")
+            model = early_stopper.restore(model)
+            break
+        
+        if testloader is not None:
             loss_train_set.append(loss_value_train)
             loss_test_set.append(loss_value_test)
         else:
             loss_train_set.append(loss_value_train)
-    
+
     loss_train_set = jnp.array(loss_train_set)
     loss_test_set = jnp.array(loss_test_set)
     
@@ -67,6 +122,7 @@ def train_each_step_dl(
     for i, (x, y) in enumerate(trainloader):
         x, y = jnp.array(x), jnp.array(y)
         model, opt_state, train_loss_each = make_step(
+        # model_new, opt_state, train_loss_each = make_step(
             model, filter_model_spec, x, y, loss_func, optim, opt_state
         )
         k += 1

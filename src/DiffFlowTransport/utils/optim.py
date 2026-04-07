@@ -15,6 +15,12 @@ from tqdm import tqdm
 from typing import Optional, Callable, Tuple, List
 from jaxtyping import Array, PyTree
 
+from .optim_dl import EarlyStopping
+
+
+# Initialize the early stopper
+early_stopper = EarlyStopping(patience=50, min_delta=1e-3)
+
 
 def train_transport_model(
     model, epochs, loss_func, optim,
@@ -22,22 +28,35 @@ def train_transport_model(
     filter_model_spec=None
 ):
     # Get the filter_model_spec
-    # For now, we aim to train the sas function only
+    # TODO: For now, we aim to train the sas function only
     if filter_model_spec is None:
-        filter_model_spec = jtu.tree_map(lambda _: False, model)
-        sas_Q_filter = jtu.tree_map(lambda _: True, model.sas_Q)
-        sas_ET_filter = jtu.tree_map(lambda _: True, model.sas_ET)
-        sas_Q_filter = eqx.tree_at(lambda t: (t.loc,), sas_Q_filter, replace=(False,))
-        sas_ET_filter = eqx.tree_at(lambda t: (t.loc,), sas_ET_filter, replace=(False,))
-        # filter_model_spec = eqx.tree_at(lambda t: (t.C_Q_old,), filter_model_spec, replace=(True,))
-        filter_model_spec = eqx.tree_at(lambda t: (t.sas_Q, t.sas_ET), filter_model_spec, replace=(sas_Q_filter, sas_ET_filter))
+        # filter_model_spec = eqx.is_inexact_array
+        filter_model_spec = jtu.tree_map(eqx.is_inexact_array, model)
+        filter_model_spec = eqx.tree_at(lambda t: (t.solver,), filter_model_spec, replace=(False,))
+        filter_model_spec = eqx.tree_at(lambda t: (t.dt,), filter_model_spec, replace=(False,))
+        filter_model_spec = eqx.tree_at(lambda t: (t.α_Q,), filter_model_spec, replace=(False,))
+        filter_model_spec = eqx.tree_at(lambda t: (t.α_ET,), filter_model_spec, replace=(False,))
+        filter_model_spec = eqx.tree_at(lambda t: (t.nm,), filter_model_spec, replace=(False,))
+        filter_model_spec = eqx.tree_at(lambda t: (t.τ_max,), filter_model_spec, replace=(False,))
+        filter_model_spec = eqx.tree_at(lambda t: (t.k1,), filter_model_spec, replace=(False,))
+        filter_model_spec = eqx.tree_at(lambda t: (t.C_eq,), filter_model_spec, replace=(False,))
+        filter_model_spec = eqx.tree_at(lambda t: (t.C_Q_old,), filter_model_spec, replace=(False,))
+        # filter_model_spec = jtu.tree_map(lambda _: False, model)
+        # sas_Q_filter = jtu.tree_map(lambda _: True, model.sas_Q)
+        # sas_ET_filter = jtu.tree_map(lambda _: True, model.sas_ET)
+        # sas_Q_filter = eqx.tree_at(lambda t: (t.loc,), sas_Q_filter, replace=(False,))
+        # sas_ET_filter = eqx.tree_at(lambda t: (t.loc,), sas_ET_filter, replace=(False,))
+        # # filter_model_spec = eqx.tree_at(lambda t: (t.C_Q_old,), filter_model_spec, replace=(True,))
+        # filter_model_spec = eqx.tree_at(lambda t: (t.sas_Q, t.sas_ET), filter_model_spec, replace=(sas_Q_filter, sas_ET_filter))
 
     # We train the transport model againt the CQ observations only
     model_new, loss_train, loss_test = train(
-        model.get_CQ, filter_model_spec.get_CQ,
+        # model.get_CQ, filter_model_spec.get_CQ,
+        model, filter_model_spec,
         epochs, loss_func, optim, x_train, y_train, x_test, y_test
     )
-    return model_new.__self__, loss_train, loss_test
+    #return model_new.__self__, loss_train, loss_test
+    return model_new, loss_train, loss_test
 
 
 def train(
@@ -66,7 +85,9 @@ def train(
         loss_train_set: the loss values of the train set
         loss_test_set: the loss values of the test set
     """
-    opt_state = optim.init(eqx.filter(model, eqx.is_array))
+    diff_model, static_model = eqx.partition(model, filter_model_spec)
+    opt_state = optim.init(diff_model)
+    # opt_state = optim.init(eqx.filter(model, eqx.is_array))
 
     loss_train_set, loss_test_set = [], []
     for step in tqdm(range(nsteps)):
@@ -80,6 +101,15 @@ def train(
         # Evaluate the model on the test data
         if x_test is not None:
             loss_value_test = evaluate(model, x_test, y_test, loss_func)
+        
+        # Check early stopping
+        stop = early_stopper.update(loss_value_test, model)
+        if stop:
+            print(f"Early stopping at epoch {step}")
+            model = early_stopper.restore(model)
+            break
+
+        if x_test is not None:
             loss_train_set.append(loss_value_train)
             loss_test_set.append(loss_value_test)
         else:
@@ -107,11 +137,14 @@ def make_step(
     loss_value, grads = loss_func_optim(
             diff_model, static_model, x, y, loss_func, **model_args
     )
-    updates, opt_state = optim.update(grads, opt_state, model)
+    # updates, opt_state = optim.update(grads, opt_state, model)
+    # model = eqx.apply_updates(model, updates)
+    updates, opt_state = optim.update(grads, opt_state, diff_model)
+    diff_model = eqx.apply_updates(diff_model, updates)
+    model = eqx.combine(diff_model, static_model)
     # jax.debug.print("a update: {x}", x=updates.__self__.sas_Q.a)
     # jax.debug.print("a grad: {x}", x=grads.__self__.sas_Q.a)
     # jax.debug.print("loss_value: {x}", x=loss_value)
-    model = eqx.apply_updates(model, updates)
     return model, opt_state, loss_value
 
 
@@ -130,7 +163,8 @@ def loss_func_optim(
        https://docs.kidger.site/equinox/examples/frozen_layer/.
     """
     model = eqx.combine(diff_model, static_model)
-    pred_y = model(*x, **model_args)
+    # pred_y = model(*x, **model_args)
+    pred_y = model.get_CQ(*x, **model_args)
     # return loss_func(y[ymask], pred_y[ymask])
     return loss_func(y, pred_y)
 
@@ -138,6 +172,7 @@ def loss_func_optim(
 def evaluate(model: eqx.Module, x: Array, y: Array,
              loss_func: Callable, *model_args):
     loss_func = eqx.filter_jit(loss_func)
-    pred_y = model(*x, *model_args)
+    # pred_y = model(*x, *model_args)
+    pred_y = model.get_CQ(*x, *model_args)
     # return loss_func(y[ymask], pred_y[ymask])
     return loss_func(y, pred_y)

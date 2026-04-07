@@ -58,6 +58,7 @@ class SAS_Uniform(SASBase):
         return jax.scipy.stats.uniform.cdf(Si, loc=loc, scale=scale)
 
 
+# TODO: Double check the accuracy of the storage-dependent SAS uniform distribution
 class SAS_Uniform_VaryingScale(SASBase):
     
     def __init__(self, scale):
@@ -112,6 +113,38 @@ class SAS_Gamma_VaryingScale(SASBase):
     
     def __call__(self, Si, x=1.0):
         a, loc, scale = self.a, self.loc, jnp.array(x)
+        y = (Si - loc) / scale
+        y = jax.lax.max(1e-20, y)
+        # print(scale.shape, x.shape, x.flatten().shape, Si.shape, y.shape)
+        return jax.scipy.stats.gamma.cdf(y, a, loc=0., scale=1.)
+
+
+# TODO: Double check the accuracy of the storage-dependent SAS gamma distribution
+class SAS_Gamma_StorageDependent(SASBase):
+    a: Array
+    λ: Array
+    ΔScλ: Array
+    
+    def __init__(self, a, λ, ΔScλ, loc=0.0):
+        super().__init__(loc, scale=1.0)
+        self.a = jnp.array(a)
+        self.λ = jnp.array(λ)
+        self.ΔScλ = jnp.array(ΔScλ)
+    
+    def pdf(self, Si, ΔS):
+    # def pdf(self, inputs):
+        # Si, ΔS = inputs[0], inputs[1]
+        scale = self.λ * ΔS - self.ΔScλ
+        a, loc = self.a, self.loc
+        y = (Si - loc) / scale
+        # TODO: the minimum scaled y is needed to avoid
+        # the FloatingPointError in jit operations!
+        y = jax.lax.max(1e-20, y)
+        return jax.scipy.stats.gamma.pdf(y, a, loc=0., scale=1.)
+    
+    def __call__(self, Si, ΔS):
+        scale = self.λ * ΔS - self.ΔScλ
+        a, loc = self.a, self.loc
         y = (Si - loc) / scale
         y = jax.lax.max(1e-20, y)
         # print(scale.shape, x.shape, x.flatten().shape, Si.shape, y.shape)
@@ -216,13 +249,15 @@ class SAS_NormalMDN(SASBase):
     def pdf(self, Si, x):
         α, μ, σ, scale = self.get_param(x)
         y = (Si - self.loc) / scale
-        pdfs = jax.vmap(jax.scipy.stats.norm.pdf, in_axes=(None,0,0))(y, μ, σ)
+        pdfs = jax.vmap(jax.scipy.stats.truncnorm.pdf, in_axes=(None,0,0,0,0))(y, 0., 10., μ, σ)
+        # pdfs = jax.vmap(jax.scipy.stats.norm.pdf, in_axes=(None,0,0))(y, μ, σ)
         return jnp.sum(jnp.dot(α, pdfs))
     
     def __call__(self, Si, x):
         α, μ, σ, scale = self.get_param(x)
         y = (Si - self.loc) / scale
-        cdfs = jax.vmap(jax.scipy.stats.norm.cdf, in_axes=(None,0,0))(y, μ, σ)
+        # cdfs = jax.vmap(jax.scipy.stats.norm.cdf, in_axes=(None,0,0))(y, μ, σ)
+        cdfs = jax.vmap(jax.scipy.stats.truncnorm.cdf, in_axes=(None,0,0,0,0))(y, 0., 10., μ, σ)
         return jnp.sum(jnp.dot(α, cdfs))
 
 
@@ -263,7 +298,8 @@ class SAS_GammaMDN(SASBase):
 
         # Calculate the shape parameter of the Gamma distribution
         z_a = self.m_a(z) # shape: (n_mixture,)
-        a = jax.nn.sigmoid(z_a)
+        # a = jax.nn.sigmoid(z_a)
+        a = jax.nn.softplus(z_a)
         
         # Calculate the scale
         scale_α = self.m_scale(z) # shape: (1,)
@@ -320,7 +356,8 @@ class SAS_MDN(SASBase):
         Γa, μ, σ = z_a
         # Βa = jax.nn.softplus(Βa)  # parameter a of beta distribution
         # Βb = jax.nn.softplus(Βb)  # parameter b of beta distribution
-        Γa = jax.nn.sigmoid(Γa)  # shape parameter of gamma distribution
+        # Γa = jax.nn.sigmoid(Γa)  # shape parameter of gamma distribution
+        Γa = jax.nn.softplus(Γa)  # shape parameter of gamma distribution
         μ = μ  # mean of normal distribution
         σ = jnp.exp(σ)  # std of normal distribution
         
@@ -335,10 +372,11 @@ class SAS_MDN(SASBase):
         α, Γa, μ, σ, scale = self.get_param(x)
         y = (Si - self.loc) / scale
         y = jax.lax.max(1e-20, y)
-        pdf_norm = jax.scipy.stats.norm.cdf(y, μ, σ)
-        pdf_uniform = jax.scipy.stats.uniform.cdf(y, loc=0., scale=1.)
-        pdf_gamma = jax.scipy.stats.gamma.cdf(y, Γa, loc=0., scale=1.)
-        # pdf_beta = jax.scipy.stats.beta.cdf(y, Βa, Βb, loc=0., scale=1.)
+        # pdf_norm = jax.scipy.stats.norm.pdf(y, μ, σ)
+        pdf_norm = jax.scipy.stats.truncnorm.pdf(y, 0., 10., μ, σ)
+        pdf_uniform = jax.scipy.stats.uniform.pdf(y, loc=0., scale=1.)
+        pdf_gamma = jax.scipy.stats.gamma.pdf(y, Γa, loc=0., scale=1.)
+        # pdf_beta = jax.scipy.stats.beta.pdf(y, Βa, Βb, loc=0., scale=1.)
         pdfs = jnp.array([pdf_norm, pdf_uniform, pdf_gamma])
         return jnp.sum(jnp.dot(α, pdfs))
     
@@ -346,7 +384,8 @@ class SAS_MDN(SASBase):
         α, Γa, μ, σ, scale = self.get_param(x)
         y = (Si - self.loc) / scale
         y = jax.lax.max(1e-20, y)
-        cdf_norm = jax.scipy.stats.norm.cdf(y, μ, σ)
+        # cdf_norm = jax.scipy.stats.norm.cdf(y, μ, σ)
+        cdf_norm = jax.scipy.stats.truncnorm.cdf(y, 0., 10., μ, σ)
         cdf_uniform = jax.scipy.stats.uniform.cdf(y, loc=0., scale=1.)
         cdf_gamma = jax.scipy.stats.gamma.cdf(y, Γa, loc=0., scale=1.)
         # cdf_beta = jax.scipy.stats.beta.cdf(y, Βa, Βb, loc=0., scale=1.)
@@ -387,7 +426,8 @@ class SAS_MDN2(SASBase):
         # Calculate the parameters of distributions
         z_a = self.m_a(z) # shape: (7,)
         Γa, loc_α, scale_α = z_a[0], z_a[1:4], z_a[4:]
-        Γa = jax.nn.sigmoid(Γa)  # shape parameter of gamma distribution
+        Γa = jax.nn.softplus(Γa)  # shape parameter of gamma distribution
+        # Γa = jax.nn.sigmoid(Γa)  # shape parameter of gamma distribution
         
         # Calculate the loc and scale
         loc_α = jax.nn.softplus(loc_α)
@@ -401,9 +441,10 @@ class SAS_MDN2(SASBase):
         α, Γa, loc, scale = self.get_param(x)
         y = (Si - loc) / scale
         y = jax.lax.max(1e-20, y)
-        pdf_norm = jax.scipy.stats.norm.cdf(y[0], 0, 1)
-        pdf_uniform = jax.scipy.stats.uniform.cdf(y[1], loc=0., scale=1.)
-        pdf_gamma = jax.scipy.stats.gamma.cdf(y[2], Γa, loc=0., scale=1.)
+        # pdf_norm = jax.scipy.stats.norm.pdf(y[0], 0, 1)
+        pdf_norm = jax.scipy.stats.truncnorm.pdf(y[0], a=0., b=10., loc=3., scale=1.)
+        pdf_uniform = jax.scipy.stats.uniform.pdf(y[1], loc=0., scale=1.)
+        pdf_gamma = jax.scipy.stats.gamma.pdf(y[2], Γa, loc=0., scale=1.)
         pdfs = jnp.array([pdf_norm, pdf_uniform, pdf_gamma])
         return jnp.sum(jnp.dot(α, pdfs))
     
@@ -411,7 +452,8 @@ class SAS_MDN2(SASBase):
         α, Γa, loc, scale = self.get_param(x)
         y = (Si - loc) / scale
         y = jax.lax.max(1e-20, y)
-        cdf_norm = jax.scipy.stats.norm.cdf(y[0], 0, 1)
+        # cdf_norm = jax.scipy.stats.norm.cdf(y[0], 0, 1)
+        cdf_norm = jax.scipy.stats.truncnorm.cdf(y[0], a=0., b=10., loc=3., scale=1.)
         cdf_uniform = jax.scipy.stats.uniform.cdf(y[1], loc=0., scale=1.)
         cdf_gamma = jax.scipy.stats.gamma.cdf(y[2], Γa, loc=0., scale=1.)
         cdfs = jnp.array([cdf_norm, cdf_uniform, cdf_gamma])

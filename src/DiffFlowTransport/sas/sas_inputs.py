@@ -108,9 +108,31 @@ def get_sas_inputs(
         sas_ET_args = ET_norm[:,None]
 
     elif flow_transport_coupling_type == 4: # Take logarized and normalized outflux and LSTM hidden states as arguments
+        if flow_model is None:
+            raise Exception(
+                f'The flow model is not given with flow_transport_coupling_type {flow_transport_coupling_type}.'
+            )
+        if dl is None:
+            raise Exception(
+                f'The dataloader of the flow model is not given with flow_transport_coupling_type {flow_transport_coupling_type}.'
+            )
         hidden_states = predict_dl(dl, flow_model.calculate_hidden_states)
         sas_Q_args = jnp.concat([hidden_states, logQ_norm[:,None]], axis=1)
         sas_ET_args = jnp.concat([hidden_states, ET_norm[:,None]], axis=1)
+
+    # elif flow_transport_coupling_type == 5: # Take LSTM-based predicted logarized and normalized outflux and LSTM hidden states as arguments
+    #     if flow_model is None:
+    #         raise Exception(
+    #             f'The flow model is not given with flow_transport_coupling_type {flow_transport_coupling_type}.'
+    #         )
+    #     if dl is None:
+    #         raise Exception(
+    #             f'The dataloader of the flow model is not given with flow_transport_coupling_type {flow_transport_coupling_type}.'
+    #         )
+    #     hidden_states = predict_dl(dl, flow_model.calculate_hidden_states)
+    #     Q = predict_dl(dl, flow_model)
+    #     sas_Q_args = jnp.concat([hidden_states, logQ_norm[:,None]], axis=1)
+    #     sas_ET_args = jnp.concat([hidden_states, ET_norm[:,None]], axis=1)
 
     else: # Take outflux as arguments
         sas_Q_args = jnp.array(Q)[:,None]

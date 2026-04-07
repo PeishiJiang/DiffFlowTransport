@@ -6,35 +6,58 @@
 import jax
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 
 from jaxtyping import Array
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 
-def scale_df(df, scaler_type=''):
+# TODO: Scale Q using log after any adopted scaler
+def scale_df(df, scaler_type='', logQ=False, Q_sym='Q'):
     """Scale the dataframe
     Args:
         df (pandas dataframe): the pandas dataframe with shape (Ns, Nx)
         scaler_type (str): the type of xdata scaler, either 'minmax', 'normalize', 'standard', 'log', or ''
     """
     scaler, df_norm = {}, df.copy()
+    varns = df.columns
+
+    # Take the logarithmic transform of Q before doing anything else
+    if logQ is True:
+        assert Q_sym in df.columns
+        scaler_type_q = f'log-{scaler_type}'
+        scaler_v = get_scaler_by_type(scaler_type_q)
+        df_norm[Q_sym] = scaler_v.fit_transform(df[[Q_sym]].values)
+        scaler[Q_sym] = scaler_v
+        varns = varns.drop(Q_sym)
+
+    # Get the scaler of the rest of the variables
     for varn in df.columns:
         scaler_v = get_scaler_by_type(scaler_type)
         df_norm[varn] = scaler_v.fit_transform(df[[varn]].values)
         scaler[varn] = scaler_v
+    
+    # Return
     return scaler, df_norm
 
 
 def get_scaler_by_type(scaler_type=''):
-    if scaler_type.lower() == 'minmax':
+    scaler_type_l = scaler_type.lower()
+    if scaler_type_l == 'minmax':
         scaler = MinMaxScaler()
 
-    elif scaler_type.lower() == 'standard':
+    elif scaler_type_l == 'standard':
         scaler = StandardScaler()
     
-    elif scaler_type.lower() == 'log':
+    elif scaler_type_l == 'log':
         scaler = LogScaler()
+    
+    elif scaler_type_l in {'log_minmax', 'log-minmax', 'log+minmax', 'logminmax'}:
+        scaler = LogTransformScaler(transform_type='minmax')
+
+    elif scaler_type_l in {'log_standard', 'log-standard', 'log+standard', 'logstandard'}:
+        scaler = LogTransformScaler(transform_type='standard')
 
     elif scaler_type == '':
         scaler = IdentifyScaler()
@@ -52,22 +75,33 @@ def get_scaler(data=None, scaler_type=''):
         data (array-like or None): the data array with shape (Ns, Nx)
         scaler_type (str): the type of xdata scaler, either 'minmax', 'normalize', 'standard', 'log', or ''
     """
-    if scaler_type.lower() == 'minmax':
+    scaler_type_l = scaler_type.lower()
+    if scaler_type_l == 'minmax':
         scaler = MinMaxScaler()
         scaler.fit(data)
         return scaler
         # scaler = MinMaxScaler(data)
         # return scaler
 
-    elif scaler_type.lower() == 'standard':
+    elif scaler_type_l == 'standard':
         scaler = StandardScaler()
         scaler.fit(data)
         return scaler
         # scaler = StandardScaler(data)
         # return scaler
     
-    elif scaler_type.lower() == 'log':
+    elif scaler_type_l == 'log':
         return LogScaler()
+    
+    elif scaler_type_l in {'log_minmax', 'log-minmax', 'log+minmax', 'logminmax'}:
+        scaler = LogTransformScaler(transform_type='minmax')
+        scaler.fit(data)
+        return scaler
+
+    elif scaler_type_l in {'log_standard', 'log-standard', 'log+standard', 'logstandard'}:
+        scaler = LogTransformScaler(transform_type='standard')
+        scaler.fit(data)
+        return scaler
 
     elif scaler_type == '':
         return IdentifyScaler()
@@ -77,8 +111,12 @@ def get_scaler(data=None, scaler_type=''):
 
 
 class BaseScaler(eqx.Module):
-    # def __init__(self, data=None):
-    #     self.data = data
+    def fit(self, data):
+        return self
+
+    def fit_transform(self, data):
+        self.fit(data)
+        return self.transform(data)
 
     def transform(self, data):
         pass
@@ -163,7 +201,6 @@ class LogScaler(BaseScaler):
     base: Array
 
     def __init__(self, data=None, base=10.):
-        super().__init__(data)
         self.base = jnp.array(base)
 
     def transform(self, data):
@@ -171,3 +208,51 @@ class LogScaler(BaseScaler):
 
     def inverse_transform(self, scaled_data):
         return jnp.power(self.base, scaled_data)
+
+
+class LogTransformScaler(BaseScaler):
+    """Apply logarithmic transform first, then the selected scaler."""
+    base: Array
+    transform_type: str
+    scaler: object
+
+    def __init__(self, data=None, transform_type='minmax', base=10.):
+        self.base = jnp.array(base)
+        self.transform_type = transform_type.lower()
+        if self.transform_type == 'minmax':
+            self.scaler = MinMaxScaler()
+        elif self.transform_type == 'standard':
+            self.scaler = StandardScaler()
+        elif self.transform_type == '':
+            self.scaler = IdentifyScaler()
+        else:
+            raise Exception("Unknown transform type after log: %s" % transform_type)
+
+        if data is not None:
+            self.fit(data)
+
+    def _log_transform(self, data):
+        data = jnp.array(data)
+        return jnp.log(data) / jnp.log(self.base)
+
+    def fit(self, data):
+        log_data = np.asarray(self._log_transform(data))
+        if hasattr(self.scaler, 'fit'):
+            self.scaler.fit(log_data)
+        return self
+
+    def transform(self, data):
+        log_data = np.asarray(self._log_transform(data))
+        if hasattr(self.scaler, 'transform'):
+            out = self.scaler.transform(log_data)
+        else:
+            out = log_data
+        return jnp.array(out)
+
+    def inverse_transform(self, scaled_data):
+        scaled_data = np.asarray(scaled_data)
+        if hasattr(self.scaler, 'inverse_transform'):
+            log_data = self.scaler.inverse_transform(scaled_data)
+        else:
+            log_data = scaled_data
+        return jnp.power(self.base, jnp.array(log_data))

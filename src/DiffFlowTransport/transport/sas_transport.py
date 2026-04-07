@@ -17,10 +17,13 @@ from ..sas import SASBase
 class SASTransport(eqx.Module):
     sas_Q: SASBase
     sas_ET: SASBase
+    # solver: Callable = eqx.static_field()
     solver: Callable
     dt: float
     α_Q: float
     α_ET: float
+    # nm: int = eqx.static_field()
+    # τ_max: int = eqx.static_field()
     nm: int
     τ_max: int
     k1: Array
@@ -57,6 +60,15 @@ class SASTransport(eqx.Module):
 
         # Number of solutes
         self.nm = self.C_eq.size
+    
+    def k1_true(self):
+        return jax.nn.relu(self.k1)
+
+    def C_eq_true(self):
+        return jax.nn.relu(self.C_eq)
+
+    def C_Q_old_true(self):
+        return jax.nn.relu(self.C_Q_old)
 
     @eqx.filter_jit
     def __call__(self, J, C_J, Q, ET, sTmT_init, sas_Q_args, sas_ET_args):
@@ -80,9 +92,9 @@ class SASTransport(eqx.Module):
         dt = self.dt
         α_Q = self.α_Q
         α_ET = self.α_ET
-        k1 = self.k1
-        C_eq = self.C_eq
-        C_Q_old = self.C_Q_old
+        k1 = self.k1_true()
+        C_eq = self.C_eq_true()
+        C_Q_old = self.C_Q_old_true()
         solver = self.solver
 
         nτ, _ = sTmT_init.shape
@@ -99,7 +111,7 @@ class SASTransport(eqx.Module):
         # sTmTs: (nτ, nt, nm+1)
         # mQETs: (nτ, nt, nm, 2)
         # pQETs: (nτ, nt, 2)
-        # mR: (nτ, nt, nm)
+        # mRs: (nτ, nt, nm)
         sTmTs, mQETs, pQETs, mRs = solve_ttd_sTmT(
             fvec, solver,
             J_full, C_J, Q, ET, dt,
@@ -108,7 +120,7 @@ class SASTransport(eqx.Module):
             α_Q, α_ET, k1, C_eq, 
             # solver=solver, f=f
         )
-    
+ 
         sT = sTmTs[...,0]  # (nτ, nt)
         mT = sTmTs[...,1:]  # (nτ, nt, nm)
         
@@ -128,13 +140,16 @@ class SASTransport(eqx.Module):
         # Contribution from old water
         pQs = pQETs[...,0]  # (nτ, nt)
         P_Q_old = P_Q_old - pQs.sum(axis=0) * dt  # (nt,)
-        # P_Q_old = jax.nn.relu(P_Q_old)
+        P_Q_old = jax.nn.relu(P_Q_old)
         C_Q2 = jnp.vectorize(lambda a,b: a*b)(
             jnp.stack([C_Q_old]*nt), jnp.stack([P_Q_old]*nm).T
         )  # (nt,nm)
         # The old water concentration should be zero if Q is zero
         def convert_zeroQ_to_zeroC(q, c):
             return jnp.where(q==0.0, 0.0, c)
+        # jax.debug.print("Number of negative P_Q_old: {}", jnp.sum(P_Q_old<0))
+        # jax.debug.print("Number of negative C_Q2: {}", jnp.sum(C_Q2<0))
+        # jax.debug.print("Number of negative C_Q1: {}", jnp.sum(C_Q1<0))
         C_Q2 = jax.vmap(convert_zeroQ_to_zeroC, in_axes=(0,0))(
             Q, C_Q2
         )
@@ -295,6 +310,7 @@ def solve_ttd_sTmT(
     sas_funcs = [sas_Q, sas_ET]
     other_args = [α_Q, α_ET, k1, C_eq]
     
+    @eqx.filter_checkpoint
     def step_τ(states, x):
         # sTmT_init_τ : (1+nm,)
         sTmT_init_τ, J_τ = x

@@ -174,7 +174,12 @@ def load_model(f_configs, saved_folder=Path("./models")):
     train_configs = hyperparams['train_configs']
 
     Q_varn = flow_dl_configs['targets'][0]
-    scaler, df_norm = scale_df(df, train_configs['scaler_type'])
+    if 'scaler_type' in train_configs:
+        scaler, df_norm = scale_df(df, train_configs['scaler_type'])
+    elif 'scaler_configs' in train_configs:
+        scaler, df_norm = scale_df(df, **train_configs['scaler_configs'])
+    else:
+        raise Exception('There is neither scaler_type nor scaler_configs!')
     Q_scaler = scaler[Q_varn].inverse_transform
 
     flow_data_loader = make_pytorch_timeseries_dataloader(

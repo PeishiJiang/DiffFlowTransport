@@ -66,10 +66,11 @@ flow_transport_coupling_type = coupling_type
 # model_label = f'mdn2-couplingtype{flow_transport_coupling_type}-logQ'  # TODO
 # Label
 # if randomseed == 20 and mlp_depth == 2 and mlp_width == 10:
+rainlabel = '' if not onlyrain else 'onlyrain-'
 if randomseed == 42 and mlp_depth == 2 and mlp_width == 10:
-    model_label = f'mdn2-couplingtype{flow_transport_coupling_type}-logQ'
+    model_label = f'mdn2-couplingtype{flow_transport_coupling_type}-{rainlabel}logQ'
 else:
-    model_label = f'mdn2-couplingtype{flow_transport_coupling_type}-logQ-rd{randomseed}-mlpd{mlp_depth}-mlpw{mlp_width}'
+    model_label = f'mdn2-couplingtype{flow_transport_coupling_type}-{rainlabel}logQ-rd{randomseed}-mlpd{mlp_depth}-mlpw{mlp_width}'
 
 
 # %% [markdown]

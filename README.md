@@ -1,4 +1,3 @@
-# DiffFlowTransport
 # DiffSAS: A Differentiable StorAge Selection Function-based Transport Model
 
 <!-- <p align="center">

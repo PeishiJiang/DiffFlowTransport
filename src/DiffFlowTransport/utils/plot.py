@@ -50,6 +50,7 @@ plt.rc("ytick", labelsize=small_size)  # fontsize of the tick labels
 plt.rc("legend", fontsize=small_size)  # legend fontsize
 plt.rc("figure", titlesize=small_size)  # fontsize of the figure title
 plt.rc("text", usetex=False)
+plt.rcParams["figure.constrained_layout.use"] = True
 plt.rcParams["figure.dpi"] = 300
 
 figsize_1 = (8, 5)
@@ -111,12 +112,24 @@ def plot_obs_1to1(
     ax.scatter(obs, sim, color=color, s=s, alpha=alpha)
     if limy is None:
         ax.plot(limx, limx, "k--")
+    text = (
+        f"CC: {cc:.2f}\nNSE: {nse:.2f} ({varn})"
+        if varn != ''
+        else f"CC: {cc:.2f}\nNSE: {nse:.2f}"
+    )
+    ax.text(
+        0.05, 0.75, text, size=15, transform=ax.transAxes, fontstyle='italic',
+        bbox=dict(
+        facecolor="white",
+        alpha=0.5,        # transparency: 0=fully transparent, 1=solid
+        edgecolor="none"  # no border
+    ))
     ax.set(
         xlim=limx,
         ylim=limx if limy is None else limy,
         xlabel=xlabel,
         ylabel=ylabel,
-        title=f"CC: {cc:.3f}; NSE: {nse:.3f} ({varn})" if varn != '' else f"CC: {cc:.3f}; NSE: {nse:.3f}",
+        # title=f"CC: {cc:.3f}; NSE: {nse:.3f} ({varn})" if varn != '' else f"CC: {cc:.3f}; NSE: {nse:.3f}",
         # title=f"{varn} (CC: {cc:.3f}; NSE: {nse:.3f})" if limy is None else f"{varn}",
         # title=f"{varn} (mKGE: {mkge:.3f}; NSE: {nse:.3f})" if limy is None else f"{varn}",
         # title=f"{varn} NSE: {nse:.3f}" if limy is None else f"{varn}",
@@ -152,7 +165,7 @@ def plot_obs_1to1_2sim(
 
 def plot_timeseries_obs_1to1(
     obs, sim, lim, timesteps=None, varn="varn", axes=None, title=None, linestyle="-",
-    units='[-]', label_sim='Simulation', label_obs='Observation', figsize=None
+    units='[-]', label_sim='Simulation', label_obs='Observation', figsize=None, legend=True
 ):
     if title is None:
         title = varn
@@ -198,13 +211,14 @@ def plot_timeseries_obs_1to1(
         linestyle=linestyle,
         color="tab:blue",
     )
-    ax1.legend(frameon=False, ncols=3, bbox_to_anchor=(1.0, -0.2))
+    if legend:
+        ax1.legend(frameon=False, ncols=3, bbox_to_anchor=(1.0, -0.2))
     ax1.set(title=title, xlabel='')
     ax2.yaxis.set_label_position("right")
     ax2.yaxis.tick_right()
     plot_obs_1to1(obs, sim, lim, ax=ax2, s=2, color="tab:blue", varn="", xlabel=label_obs, ylabel=label_sim)
     # plt.subplots_adjust(hspace=0.9)
-    return fig, ax1, ax2  # pyright: ignore
+    return ax1, ax2  # pyright: ignore
 
 
 def plot_2timeseries_obs_1to1(
@@ -761,9 +775,10 @@ def plot_PQET_ST_esspi(
     return [ax0, ax1]
 
 
-def plot_PQET_ST_esspi_ensemble(
+def plot_PQ_ensemble(
     Q, pQ_set, sT_set, timesteps, Q_units='[mm d$^{-1}$]', sel_time_ind='default',
-    dt=1.0, last_age_cut=None, axes=None, figsize=None, label=''
+    dt=1.0, last_age_cut=None, axes=None, figsize=None, label='',
+    plot_all_PQs=False, plot_sel_time_style='line'
 ):
     # Identify the selected time steps for plotting
     if sel_time_ind == 'default':
@@ -782,15 +797,18 @@ def plot_PQET_ST_esspi_ensemble(
         colors = [cmap(i) for i in range(num_lines)]
     
     # Calculate PQ and ST
-    PQ_set, ST_set, S_set = [], [], [] 
+    # PQ_set, ST_set, S_set = [], [], [] 
+    PQ_set, PQ_select_set = [], []
     for i, pQ in enumerate(pQ_set):
-        sT = sT_set[i]
         PQ = jnp.cumsum(pQ, axis=0) * dt
-        ST = jnp.cumsum(sT[:,1:], axis=0) * dt
-        S = ST[-1,:]
         PQ_set.append(PQ)
-        ST_set.append(ST)
-        S_set.append(S)
+        PQ_select_set.append(PQ[:,sel_time_ind])
+        # sT = sT_set[i]
+        # ST = jnp.cumsum(sT[:,1:], axis=0) * dt
+        # S = ST[-1,:]
+        # ST_set.append(ST)
+        # S_set.append(S)
+    PQ_select_set = np.array(PQ_select_set)
 
     if figsize is None:
         figsize = (10,12)
@@ -812,14 +830,115 @@ def plot_PQET_ST_esspi_ensemble(
 
     # Plot TTDs
     ax1 = fig.add_subplot(gs[1:, :])
-    for i,it in enumerate(sel_time_ind):
-        color = colors[i]
+    if plot_all_PQs:
+        if last_age_cut is None:
+            last_ind = PQ.shape[1]-1
+        else:
+            last_ind = last_age_cut + 1
         for PQ in PQ_set:
-            ax1.plot(PQ[:,it], color=color, alpha=0.7)
-    ax1.set(xlabel=r'Age $T$ [d]', ylim=[-0.05,1.1], 
+            for i in range(1, last_ind):
+                ax1.plot(PQ[:,-i], color='lightgrey', alpha=0.01)
+    if plot_sel_time_style == 'line':
+        for i,it in enumerate(sel_time_ind):
+            color = colors[i]
+            for PQ in PQ_set:
+                ax1.plot(PQ[:,it], color=color, alpha=0.7)
+    elif plot_sel_time_style == 'sd':
+        for i,it in enumerate(sel_time_ind):
+            color = colors[i]
+            # mean = PQ_select_set[...,i].mean(axis=0)   # shape (nt,)
+            # std  = PQ_select_set[...,i].std(axis=0)    # shape (nt,)
+            mean = np.nanmean(PQ_select_set[...,i], axis=0)   # shape (nt,)
+            std  = np.nanstd(PQ_select_set[...,i], axis=0)    # shape (nt,)
+            ax1.plot(mean, color=color, label="Mean", linewidth=2)
+            ax1.fill_between(range(mean.size), mean - std, mean + std, color=color, alpha=0.5, label="±1 Std Dev")
+    ax1.set(xlabel=r'Age $T$ [d]', ylim=[0.0,1.0], xscale='linear',
             ylabel=r'Streamflow TTDs $P_Q$' + f" ({label})" if label!='' else r'Streamflow TTDs $P_Q$')
      
     return [ax0, ax1]
+
+
+def plot_PQ_ST_ensemble(
+    Q, sT_set, pQ_set, timesteps,
+    Q_units='Streamflow [mm d-1]', dt=1.0, sel_time_ind='default',
+    plot_all_PQs=False, plot_sel_time_style='line', suptitle=None
+):
+    # Identify the selected time steps for plotting
+    if sel_time_ind == 'default':
+        nt, nt_cut = Q.size, 0
+        nt_res_mid = int((nt - nt_cut)/2)
+        Q2 = Q[nt_cut:]
+        # sel_time_ind = jnp.argsort(Q2)[:2].tolist() + \
+        #     jnp.argsort(Q2)[nt_res_mid:nt_res_mid+2].tolist() + \
+        #     jnp.argsort(Q2)[-2:].tolist()
+        sel_time_ind = jnp.argsort(Q2)[:1].tolist() + \
+            jnp.argsort(Q2)[nt_res_mid:nt_res_mid+1].tolist() + \
+            jnp.argsort(Q2)[-1:].tolist()
+        sel_time_ind = [ind+nt_cut for ind in sel_time_ind]
+        num_lines = len(sel_time_ind)
+        cmap = cm.get_cmap('winter_r', num_lines)
+        colors = [cmap(i) for i in range(num_lines)]
+    
+    # Calculate PQ, ST, QTC, and STC
+    PQ_set, ST_set, QTC_set, STC_set = [], [], [], []
+    # PQ_select_set, ST_select_set, QTC_select_set, STC_select_set = [], [], [], []
+    for i, pQ in enumerate(pQ_set):
+        sT = sT_set[i]
+        PQ = jnp.cumsum(pQ, axis=0) * dt
+        ST = jnp.cumsum(sT[:,1:], axis=0) * dt
+        S = ST[-1,:]
+        QT = jax.vmap(lambda a,b: a*b, in_axes=(0,1), out_axes=1)(Q, PQ)
+        STC = jax.vmap(lambda a,b: a-b, in_axes=(0,1), out_axes=1)(S, ST)
+        QTC = jax.vmap(lambda a,b: a-b, in_axes=(0,1), out_axes=1)(Q, QT)
+        PQ_set.append(PQ)
+        ST_set.append(ST)
+        QTC_set.append(QTC)
+        STC_set.append(STC)
+        # PQ_select_set.append(PQ[:,sel_time_ind])
+        # ST_select_set.append(ST[:,sel_time_ind])
+        # QTC_select_set.append(QTC[:,sel_time_ind])
+        # STC_select_set.append(STC[:,sel_time_ind])
+    # PQ_select_set = np.array(PQ_select_set)
+    # ST_select_set = np.array(ST_select_set)
+    # QTC_select_set = np.array(QTC_select_set)
+    # STC_select_set = np.array(STC_select_set)
+    
+    # Plot them
+    # fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    # fig = plt.figure(figsize=figsize)
+    fig = plt.figure(figsize=(12, 8))
+    gs = gridspec.GridSpec(2, 2, height_ratios=[0.5, 1], hspace=0.3, wspace=0.2)
+
+    ax = fig.add_subplot(gs[0, :])  # Span both columns
+    ax = plot_timeseries(
+        Q, timesteps=timesteps, ax=ax, title=None,
+        ylabel=Q_units, linestyle='.', color='k'
+    )
+    for i,it in enumerate(sel_time_ind):
+        color = colors[i]
+        ax.axvline(x=timesteps[it], linewidth=3, color=color, alpha=0.7)
+
+    # ax = axes[0]
+    ax = fig.add_subplot(gs[1, 0])
+    for i,it in enumerate(sel_time_ind):
+        color = colors[i]
+        for i,PQ in enumerate(PQ_set):
+            ST = ST_set[i]
+            ax.plot(ST[:,it], PQ[:,it], color=color, linewidth=3, alpha=0.7)
+    ax.set(title='$P_Q$ versus $S_T$', ylim=[0,1], xlabel=r'$S_T$ [mm]', ylabel=r'$P_Q$')
+
+    # ax = axes[1]
+    ax = fig.add_subplot(gs[1, 1])
+    for i,it in enumerate(sel_time_ind):
+        color = colors[i]
+        for i,QTC in enumerate(QTC_set):
+            STC = STC_set[i]
+            ax.plot(STC[:,it], QTC[:,it], color=color, linewidth=3, alpha=0.7)
+    ax.set(title=r'$\bar{Q_T}$ versus $\bar{S_T}$', xlabel=r'$\bar{S_T}$ [mm]', 
+            ylim=[0, Q.max()], ylabel=r'$\bar{Q_T}$ [mm d-1]')
+    
+    if suptitle is not None:
+        plt.suptitle(suptitle)
 
 
 def plot_young_water(
@@ -898,6 +1017,75 @@ def plot_young_water_withQ(
         weighted_pQ_young = jnp.sum(weighted_pQ_young, axis=1) / PQ_young_fraction
 
         ax1.plot(timesteps, PQ_young_fraction, c=colors[i], alpha=0.7, label=f'{int(cutoff_age)} days')
+    ax1.legend(ncols=3, bbox_to_anchor=(1.0, -0.15), frameon=False)
+
+    # ax1.set(xlim=[timesteps[0],timesteps[-1]], ylabel=f'Water fraction with age young \n than {int(max_young_age)} days ({label}) [-]', ylim=[0, 1])
+    ax1.set(xlim=[timesteps[0],timesteps[-1]], ylabel=f'Young water fraction [-] \n ({label})', ylim=[0, 1])
+    ax1.set_xticklabels(ax1.get_xticklabels(), rotation=20, ha='center')
+
+    return [ax0, ax1]
+
+
+def plot_young_water_withQ_ensemble(
+    Q, pQ_set, timesteps, Q_units='[mm d$^{-1}$]',
+    cutoff_ages=[100, 500, 1000], dt=1., axes=None, 
+    colors=None, figsize=None, label='',
+    plot_sel_time_style='sd'
+):
+    # Calculate PQ and ST
+    # PQ_set, ST_set, S_set = [], [], [] 
+    PQ_set, PQ_select_set = [], []
+    for i, pQ in enumerate(pQ_set):
+        PQ = jnp.cumsum(pQ, axis=0) * dt
+        PQ_set.append(PQ)
+        PQ_select_set.append(PQ[cutoff_ages,:])
+        # sT = sT_set[i]
+        # ST = jnp.cumsum(sT[:,1:], axis=0) * dt
+        # S = ST[-1,:]
+        # ST_set.append(ST)
+        # S_set.append(S)
+    PQ_select_set = np.array(PQ_select_set)
+
+    # Plot
+    if figsize is None:
+        figsize = (10,12)
+
+    if axes is None:
+        fig = plt.figure(figsize=figsize)
+        gs = gridspec.GridSpec(3, 2, height_ratios=[0.5, 1, 1], hspace=0.1, wspace=0.3)
+
+    # Plot streamflow
+    ax0 = fig.add_subplot(gs[0,:])
+    ax0 = plot_timeseries(
+        Q, timesteps=timesteps, ax=ax0, title=None,
+        label='Observation', ylabel=f'$Q$ {Q_units}', linestyle='.', color='k'
+    )
+    ax0.set(title='Streamflow', xlabel='', xticks=[])
+
+    # Young water fraction
+    ax1 = fig.add_subplot(gs[1:, :])
+    num_cutoff = len(cutoff_ages)
+    if colors is None:
+        cmap = cm.get_cmap('copper', num_cutoff)
+        colors = [cmap(i) for i in range(num_cutoff)]
+    for i,cutoff_age in enumerate(cutoff_ages):
+        # max_young_age = cutoff_age * dt
+        # PQ = jnp.cumsum(pQ, axis=0) * dt
+        # Calculate the young water fraction
+        PQ_young_fraction = PQ_select_set[:,i,:]
+        # mean = PQ_young_fraction.mean(axis=0)   # shape (nt,)
+        # std  = PQ_young_fraction.std(axis=0)    # shape (nt,)
+        mean = np.nanmean(PQ_young_fraction, axis=0)   # shape (nt,)
+        std  = np.nanstd(PQ_young_fraction, axis=0)    # shape (nt,)
+
+        # # Calculate the mean age of the young water fraction (or young water age)
+        # pQ_young = pQ[:cutoff_age,:]
+        # ages = jnp.arange(1, cutoff_age+1) * dt
+        # weighted_pQ_young = jax.vmap(lambda a,b: a*b, in_axes=(1, None))(pQ_young, ages)
+        # weighted_pQ_young = jnp.sum(weighted_pQ_young, axis=1) / PQ_young_fraction
+
+        ax1.plot(timesteps, mean, c=colors[i], alpha=0.7, label=f'{int(cutoff_age)} days')
+        ax1.fill_between(timesteps, mean - std, mean + std, color=colors[i], alpha=0.5, label="±1 Std Dev")
     ax1.legend(ncols=3, bbox_to_anchor=(1.0, -0.15), frameon=False)
 
     # ax1.set(xlim=[timesteps[0],timesteps[-1]], ylabel=f'Water fraction with age young \n than {int(max_young_age)} days ({label}) [-]', ylim=[0, 1])
@@ -1257,6 +1445,47 @@ def plot_mdn_weights(
         ax1.plot(timesteps, mdn_w[:,i], alpha=0.7, color=colors[i], label=dist)
     ax1.set(ylabel=r'Weights $w$' + f' ({label})' if label != '' else r'Weights $w$', 
             xlim=[timesteps[0], timesteps[-1]])
+    ax1.set_xticklabels(ax1.get_xticklabels(), rotation=20, ha='center')
+    ax1.legend(ncols=3, bbox_to_anchor=(1.0, -0.15), frameon=False)
+
+    return [ax0, ax1]
+
+
+def plot_mdn_weights_ensemble(
+    Q, mdn_w_set, timesteps, Q_units='[mm d$^{-1}$]',
+    mdn_dists=[r'$w_\mathcal{N}$', r'$w_\mathcal{U}$', r'$w_\Gamma$'],
+    axes=None, figsize=None, label=''
+):
+    # assert mdn_w.shape[1] == len(mdn_dists)
+    mdn_w_set = np.array(mdn_w_set)
+
+    if figsize is None:
+        figsize = (10,12)
+
+    if axes is None:
+        fig = plt.figure(figsize=figsize)
+        gs = gridspec.GridSpec(3, 2, height_ratios=[0.5, 1, 1], hspace=0.1, wspace=0.3)
+
+    # Plot streamflow
+    ax0 = fig.add_subplot(gs[0,:])
+    ax0 = plot_timeseries(
+        Q, timesteps=timesteps, ax=ax0, title=None,
+        label='Observation', ylabel=f'$Q$ {Q_units}', linestyle='.', color='k'
+    )
+    ax0.set(title='Streamflow', xlabel='', xticks=[])
+
+    # Plot MDN weights
+    # colors = ['salmon', 'silver', 'dimgray']
+    colors = ['violet', 'silver', 'dimgray']
+    ax1 = fig.add_subplot(gs[1:, :])
+    for i,dist in enumerate(mdn_dists):
+        mdn_w = mdn_w_set[...,i]
+        mean = np.nanmean(mdn_w, axis=0)   # shape (nt,)
+        std  = np.nanstd(mdn_w, axis=0)    # shape (nt,)
+        ax1.plot(timesteps, mean, alpha=0.7, color=colors[i], label=dist)
+        ax1.fill_between(timesteps, mean - std, mean + std, color=colors[i], alpha=0.5)
+    ax1.set(ylabel=r'Weights $w$' + f' ({label})' if label != '' else r'Weights $w$', 
+            xlim=[timesteps[0], timesteps[-1]], ylim=[0,1])
     ax1.set_xticklabels(ax1.get_xticklabels(), rotation=20, ha='center')
     ax1.legend(ncols=3, bbox_to_anchor=(1.0, -0.15), frameon=False)
 

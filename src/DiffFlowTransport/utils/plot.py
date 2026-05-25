@@ -16,6 +16,7 @@ import matplotlib.gridspec as gridspec
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 import matplotlib as mpl
+from matplotlib.lines import Line2D
 # import matplotlib.font_manager
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
@@ -1705,3 +1706,1002 @@ def _add_timeseries(
             clip_on=False,
             alpha=alpha,
         )
+
+
+######### Plotting functions for comparing different SAS ####################
+# # ── shared constants (can be overridden per call via kwargs) ─────────────────
+ 
+# _DEFAULT_MODEL_COLORS = {
+#     r"$\Gamma_\text{dynamic}$":   "black",
+#     r"MDN$_{\text{LSTM}}$":       "#1f77b4",
+#     r"MDN$_{Q}$":                 "#d62728",
+#     r"MDN$_{Q,\text{LSTM}}$":     "#2ca02c",
+# }
+# _GAMMA_LS     = "--"   # linestyle for the single Γ_dynamic run
+# _BAND_ALPHA   = 0.18   # shading transparency for ensemble ± 1 SD
+# _Q_LO_PERC   = 10     # percentile threshold for "low flow"
+# _Q_HI_PERC   = 90     # percentile threshold for "high flow"
+# _FLOW_LS      = {      # line styles per flow class inside a single model panel
+#     "low":    "-.",
+#     "median": ":",
+#     "high":   "-",
+# }
+# _FLOW_LW      = {"low": 1.5, "median": 1.5, "high": 2.0}
+# _FLOW_COLORS  = {
+#     "low":    "#2ca02c",
+#     "median": "#17becf",
+#     "high":   "#1f77b4",
+# }
+
+# ── private helpers ──────────────────────────────────────────────────────────
+
+def _get_sel_time_ind_and_colors(Q):
+    """Replicate the sel_time_ind / colormap logic of plot_PQ_ST_ensemble."""
+    nt, nt_cut = Q.size, 0
+    nt_res_mid = int((nt - nt_cut) / 2)
+    Q2 = Q[nt_cut:]
+    sel_time_ind = (
+        jnp.argsort(Q2)[:1].tolist() +
+        jnp.argsort(Q2)[nt_res_mid:nt_res_mid + 1].tolist() +
+        jnp.argsort(Q2)[-1:].tolist()
+    )
+    sel_time_ind = [ind + nt_cut for ind in sel_time_ind]
+    num_lines = len(sel_time_ind)
+    cmap   = cm.get_cmap('winter_r', num_lines)
+    colors = [cmap(i) for i in range(num_lines)]
+    return sel_time_ind, colors
+
+
+def _compute_PQ_ST_QTC_STC(pQ, sT, Q, dt):
+    """Compute PQ, ST, QTC, STC identically to plot_PQ_ST_ensemble."""
+    PQ  = jnp.cumsum(pQ, axis=0) * dt
+    ST  = jnp.cumsum(sT[:, 1:], axis=0) * dt
+    S   = ST[-1, :]
+    QT  = jax.vmap(lambda a, b: a * b, in_axes=(0, 1), out_axes=1)(Q, PQ)
+    STC = jax.vmap(lambda a, b: a - b, in_axes=(0, 1), out_axes=1)(S, ST)
+    QTC = jax.vmap(lambda a, b: a - b, in_axes=(0, 1), out_axes=1)(Q, QT)
+    return PQ, ST, QTC, STC
+
+
+def _best_member_index(df_metrics, model_type_str, model_labels):
+    """Index into model_labels of the best-MSE(C_Q, test) ensemble member."""
+    sub = df_metrics[
+        (df_metrics['model-type'] == model_type_str) &
+        (df_metrics['varn'] == 'C_Q') &
+        (df_metrics['train_or_test'] == 'test')
+    ]
+    best_label = sub.iloc[sub['mse'].argmin()]['model']
+    return model_labels.index(best_label)
+
+
+def _slice_test_period(transport_output, df, cfg, dt):
+    """Return (sT, pQ, Q, timesteps) sliced to the test period."""
+    sT_raw, _, _, pQETs_raw, _, _ = transport_output
+    test_s = cfg['train_configs']['test_start']
+    test_e = cfg['train_configs']['test_end']
+    si = df.index.get_loc(test_s)
+    ei = df.index.get_loc(test_e)
+    # sT has shape (n_ages, nt+1, ...) — keep the extra column so cumsum works
+    sT = jnp.array(sT_raw[:, si:ei + 2])   # nt+1 cols
+    pQ = jnp.array(pQETs_raw[:, si:ei + 1, 0])
+    Q  = jnp.array(df[test_s:test_e]['Q'].values, dtype=float)
+    timesteps = df[test_s:test_e].index
+    return sT, pQ, Q, timesteps
+
+
+def _fallback_cfg(configs_set):
+    """Return the first non-None config (used for Γ_dynamic date-slicing)."""
+    return next(c for c in configs_set if c is not None)
+
+
+def _flow_legend_handles(colors, flow_labels=('Low flow', 'Median flow', 'High flow')):
+    """Return Line2D legend handles coloured by flow class."""
+    return [
+        plt.Line2D([0], [0], color=colors[i], lw=2, label=flow_labels[i])
+        for i in range(len(colors))
+    ]
+
+
+def _annotate_flow_dots(ax, colors,
+                        flow_labels=('Low flow', 'Median flow', 'High flow'),
+                        loc='upper right'):
+    """
+    When show_streamflow=False, add a small coloured-dot legend inside a
+    data subplot so readers still know which colour maps to which flow class.
+    """
+    handles = [
+        plt.Line2D([0], [0], marker='o', color='none',
+                   markerfacecolor=colors[i], markersize=7,
+                   label=flow_labels[i])
+        for i in range(len(colors))
+    ]
+    ax.legend(handles=handles, loc=loc, fontsize=small_size, frameon=False,
+              handletextpad=0.3, borderpad=0.2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Figure A — p_Q vs T comparison, one row per model type
+# ─────────────────────────────────────────────────────────────────────────────
+
+def plot_ttd_comparison_best(
+    df_metrics,
+    model_labels,
+    transport_output_set,
+    df_set,
+    configs_set,
+    mdn_model_types=None,
+    gamma_label=r'$\Gamma_\text{dynamic}$',
+    gamma_fallback_configs=None,
+    dt=1.0,
+    last_age_cut=None,
+    Q_units='Streamflow [mm d$^{-1}$]',
+    show_streamflow=False,
+    figsize=(14, 5),
+    suptitle='TTD comparison — best MDN members vs $\\Gamma_\\text{dynamic}$',
+):
+    """
+    One row per model type (3 MDN types + Γ_dynamic = 4 rows).
+
+    show_streamflow=True  (default)
+        Each row: [streamflow time series (wide) | p_Q(T) curves (narrow)].
+        Coloured axvlines mark the 3 selected timesteps on the streamflow panel.
+
+    show_streamflow=False
+        Each row: [p_Q(T) curves] only — the streamflow panel is omitted.
+        Flow-class colours are still applied to the TTD lines, and a small
+        dot legend is placed inside the first-row TTD subplot so the
+        colour → flow-class mapping remains clear.
+
+    In both modes the 3 timesteps are selected identically to
+    plot_PQ_ST_ensemble (lowest / median / highest Q, winter_r cmap).
+
+    Parameters
+    ----------
+    gamma_fallback_configs : config dict for Γ_dynamic date slicing.
+                             If None, the first non-None entry in configs_set
+                             is used automatically.
+    show_streamflow        : bool, default True.
+    """
+    if mdn_model_types is None:
+        mdn_model_types = [
+            r'MDN$_{\text{LSTM}}$',
+            r'MDN$_{Q}$',
+            r'MDN$_{Q,\text{LSTM}}$',
+        ]
+
+    all_types = mdn_model_types + [gamma_label]
+    n_rows    = len(all_types)
+
+    fig = plt.figure(figsize=figsize)
+    if show_streamflow:
+        gs = gridspec.GridSpec(n_rows, 2, width_ratios=[3, 1],
+                               hspace=0.35, wspace=0.05)
+    else:
+        gs = gridspec.GridSpec(1, n_rows, hspace=0.35)
+
+    for row, mtype in enumerate(all_types):
+        is_gamma = (mtype == gamma_label)
+
+        if is_gamma:
+            idx = model_labels.index(gamma_label)
+            cfg = gamma_fallback_configs if gamma_fallback_configs is not None \
+                  else _fallback_cfg(configs_set)
+        else:
+            idx = _best_member_index(df_metrics, mtype, model_labels)
+            cfg = configs_set[idx]
+
+        sT, pQ, Q, timesteps = _slice_test_period(
+            transport_output_set[idx], df_set[idx], cfg, dt
+        )
+
+        sel_time_ind, colors = _get_sel_time_ind_and_colors(np.array(Q))
+
+        PQ = jnp.cumsum(pQ, axis=0) * dt
+        last_ind = (PQ.shape[1] - 1) if last_age_cut is None else (last_age_cut + 1)
+
+        if show_streamflow:
+            ax_ts  = fig.add_subplot(gs[row, 0])
+            ax_ttd = fig.add_subplot(gs[row, 1])
+
+            # streamflow panel
+            ax_ts = plot_timeseries(
+                np.array(Q), timesteps=timesteps, ax=ax_ts, title=None,
+                label='Observation',
+                ylabel=Q_units if row == 0 else '',
+                linestyle='.', color='k',
+            )
+            for i, it in enumerate(sel_time_ind):
+                ax_ts.axvline(x=timesteps[it], color=colors[i], alpha=0.7)
+            ax_ts.set(title=mtype, xlabel='')
+            if row < n_rows - 1:
+                ax_ts.set_xticklabels([])
+            ax_ts.spines[['top', 'right']].set_visible(False)
+        else:
+            ax_ttd = fig.add_subplot(gs[0, row])
+            ax_ttd.set_title(mtype, fontsize=small_size)
+
+        # TTD — grey background lines over all timesteps
+        for i in range(1, last_ind):
+            ax_ttd.plot(PQ[:, -i], color='grey', alpha=0.05)
+        # coloured lines for the 3 selected timesteps
+        for i, it in enumerate(sel_time_ind):
+            ax_ttd.plot(PQ[:, it], color=colors[i], alpha=0.7, linewidth=2)
+
+        ax_ttd.set(
+            # xlabel=r'Age $T$ [d]' if row == n_rows - 1 else '',
+            xlabel=r'Age $T$ [d]',
+            ylim=[0.0, 1.2],
+            ylabel=r'$P_Q$' if row == 0 else '',
+        )
+        if show_streamflow:
+            if row < n_rows - 1:
+                ax_ttd.set_xticklabels([])
+        ax_ttd.spines[['top', 'right']].set_visible(False)
+
+        # # dot legend only in first row when no streamflow panel
+        # if not show_streamflow and row == 0:
+        #     _annotate_flow_dots(ax_ttd, colors)
+
+    # shared bottom legend (always shown)
+    # handles = _flow_legend_handles(colors)
+    # fig.legend(handles=handles, loc='lower center', ncol=3,
+    #            fontsize=small_size, frameon=False, bbox_to_anchor=(0.5, -0.1))
+    if suptitle:
+        fig.suptitle(suptitle, fontsize=small_size)
+
+    n_data_cols = 2 if show_streamflow else 1
+    return fig, np.array(fig.axes).reshape(n_rows, n_data_cols)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Figure B — P_Q–S_T and Q̄_T–S̄_T, one row per model type
+# ─────────────────────────────────────────────────────────────────────────────
+
+def plot_PQ_ST_comparison_best(
+    df_metrics,
+    model_labels,
+    transport_output_set,
+    df_set,
+    configs_set,
+    mdn_model_types=None,
+    gamma_label=r'$\Gamma_\text{dynamic}$',
+    gamma_fallback_configs=None,
+    dt=1.0,
+    last_age_cut=None,
+    Q_units='Streamflow [mm d$^{-1}$]',
+    show_streamflow=False,
+    figsize=(14, 5),
+    suptitle=r"$P_Q$–$S_T$ and $\bar{Q}_T$–$\bar{S}_T$: best members vs $\Gamma_\text{dynamic}$",
+):
+    """
+    One row per model type (3 MDN types + Γ_dynamic = 4 rows).
+
+    show_streamflow=True  (default)
+        Each row: [streamflow | P_Q vs S_T | Q̄_T vs S̄_T].
+
+    show_streamflow=False
+        Each row: [P_Q vs S_T | Q̄_T vs S̄_T] only.
+        Flow-class colouring is preserved; a dot legend is placed inside
+        the first-row P_Q–S_T subplot.
+
+    Follows plot_PQ_ST_ensemble exactly:
+      - ST  = cumsum(sT[:, 1:]) * dt
+      - QTC = Q - Q·P_Q,  STC = S - S_T  (via jax.vmap)
+      - grey lines for all timesteps, coloured for 3 selected
+    """
+    if mdn_model_types is None:
+        mdn_model_types = [
+            r'MDN$_{\text{LSTM}}$',
+            r'MDN$_{Q}$',
+            r'MDN$_{Q,\text{LSTM}}$',
+        ]
+
+    all_types = mdn_model_types + [gamma_label]
+    n_rows    = len(all_types)
+
+    fig = plt.figure(figsize=figsize)
+    if show_streamflow:
+        gs = gridspec.GridSpec(
+            3, n_rows,
+            width_ratios=[2, 1, 1],
+            hspace=0.35, wspace=0.25,
+        )
+        n_data_cols = 3
+    else:
+        gs = gridspec.GridSpec(
+            2, n_rows, 
+            hspace=0.35, wspace=0.25,
+        )
+        n_data_cols = 2
+
+    for row, mtype in enumerate(all_types):
+        is_gamma = (mtype == gamma_label)
+
+        if is_gamma:
+            idx = model_labels.index(gamma_label)
+            cfg = gamma_fallback_configs if gamma_fallback_configs is not None \
+                  else _fallback_cfg(configs_set)
+        else:
+            idx = _best_member_index(df_metrics, mtype, model_labels)
+            cfg = configs_set[idx]
+
+        sT, pQ, Q, timesteps = _slice_test_period(
+            transport_output_set[idx], df_set[idx], cfg, dt
+        )
+
+        sel_time_ind, colors = _get_sel_time_ind_and_colors(np.array(Q))
+
+        PQ, ST, QTC, STC = _compute_PQ_ST_QTC_STC(pQ, sT, Q, dt)
+        last_ind = (ST.shape[1] - 1) if last_age_cut is None else (last_age_cut + 1)
+
+        if show_streamflow:
+            ax_ts  = fig.add_subplot(gs[0, row])
+            ax_pq  = fig.add_subplot(gs[1, row])
+            ax_qtc = fig.add_subplot(gs[2, row])
+
+            # ── streamflow ───────────────────────────────────────────────────
+            ax_ts = plot_timeseries(
+                np.array(Q), timesteps=timesteps, ax=ax_ts, title=None,
+                label='Observation',
+                ylabel=Q_units if row == 0 else '',
+                linestyle='.', color='k',
+            )
+            for i, it in enumerate(sel_time_ind):
+                ax_ts.axvline(x=timesteps[it], color=colors[i], alpha=0.7)
+            ax_ts.set(title=mtype, xlabel='')
+            if row < n_rows - 1:
+                ax_ts.set_xticklabels([])
+            if row > 0:
+                ax_ts.set_yticklabels([])
+            ax_ts.spines[['top', 'right']].set_visible(False)
+        else:
+            ax_pq  = fig.add_subplot(gs[0, row])
+            ax_qtc = fig.add_subplot(gs[1, row])
+            ax_pq.set_title(mtype, fontsize=small_size)
+
+        # ── P_Q vs S_T ───────────────────────────────────────────────────────
+        for i in range(1, last_ind):
+            ax_pq.plot(ST[:, -i], PQ[:, -i], color='grey', alpha=0.05)
+        for i, it in enumerate(sel_time_ind):
+            ax_pq.plot(ST[:, it], PQ[:, it], color=colors[i], alpha=0.7, linewidth=2)
+        ax_pq.set(
+            # xlabel=r'$S_T$ [mm]' if row == n_rows - 1 else '',
+            xlabel=r'$S_T$ [mm]',
+            ylabel=r'$P_Q$' if row == 0 else '',
+            ylim=[0.0, 1.2],
+        )
+        if show_streamflow:
+            if row < n_rows - 1:
+                ax_pq.set_xticklabels([])
+        ax_pq.spines[['top', 'right']].set_visible(False)
+
+        # # dot legend in P_Q subplot, first row, when no streamflow panel
+        # if not show_streamflow and row == 0:
+        #     _annotate_flow_dots(ax_pq, colors)
+
+        # ── Q̄_T vs S̄_T ──────────────────────────────────────────────────────
+        for i in range(1, last_ind):
+            ax_qtc.plot(STC[:, -i], QTC[:, -i], color='grey', alpha=0.05)
+        for i, it in enumerate(sel_time_ind):
+            ax_qtc.plot(STC[:, it], QTC[:, it], color=colors[i], alpha=0.7, linewidth=2)
+        ax_qtc.set(
+            # xlabel=r'$\bar{S}_T$ [mm]' if row == n_rows - 1 else '',
+            xlabel=r'$\bar{S}_T$ [mm]',
+            ylabel=r'$\bar{Q}_T$ [mm d$^{-1}$]' if row == 0 else '',
+            ylim=[0, float(np.array(Q).max())],
+        )
+        if show_streamflow:
+            if row < n_rows - 1:
+                ax_qtc.set_xticklabels([])
+        ax_qtc.spines[['top', 'right']].set_visible(False)
+
+    # shared bottom legend
+    # handles = _flow_legend_handles(colors)
+    # fig.legend(handles=handles, loc='lower center', ncol=3,
+    #            fontsize=small_size, frameon=False, bbox_to_anchor=(0.5, -0.02))
+    if suptitle:
+        fig.suptitle(suptitle, fontsize=small_size)
+
+    return fig, np.array(fig.axes).reshape(n_rows, n_data_cols)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Figure C — 4-column manuscript composite
+# ─────────────────────────────────────────────────────────────────────────────
+
+def plot_ttd_and_PQST_4col(
+    df_metrics,
+    model_labels,
+    transport_output_set,
+    df_set,
+    configs_set,
+    mdn_model_types=None,
+    gamma_label=r'$\Gamma_\text{dynamic}$',
+    gamma_fallback_configs=None,
+    dt=1.0,
+    last_age_cut=None,
+    Q_units='Streamflow [mm d$^{-1}$]',
+    show_streamflow=False,
+    figsize=(16, 10),
+    suptitle='SAS model comparison — Oak Creek (test period)',
+):
+    """
+    4-column manuscript figure (one column per model type).
+
+    show_streamflow=True  (default)
+        Row 0 — streamflow time series with coloured axvlines.
+        Row 1 — P_Q vs S_T.
+        Row 2 — Q̄_T vs S̄_T.
+
+    show_streamflow=False
+        Row 0 — P_Q vs S_T   (streamflow row removed entirely).
+        Row 1 — Q̄_T vs S̄_T.
+        The model label becomes the column title on Row 0 (P_Q subplot).
+        A dot legend is placed inside column 0, row 0 (first P_Q subplot).
+
+    All plotting follows plot_PQ_ST_ensemble exactly.
+    Column order: MDN_LSTM | MDN_Q | MDN_Q,LSTM | Γ_dynamic.
+    """
+    if mdn_model_types is None:
+        mdn_model_types = [
+            r'MDN$_{\text{LSTM}}$',
+            r'MDN$_{Q}$',
+            r'MDN$_{Q,\text{LSTM}}$',
+        ]
+
+    all_types     = mdn_model_types + [gamma_label]
+    n_cols        = len(all_types)
+
+    if show_streamflow:
+        n_rows        = 3
+        height_ratios = [0.5, 1, 1]
+    else:
+        n_rows        = 2
+        height_ratios = [1, 1]
+
+    fig = plt.figure(figsize=figsize)
+    gs  = gridspec.GridSpec(
+        n_rows, n_cols,
+        height_ratios=height_ratios,
+        hspace=0.40, wspace=0.25,
+    )
+
+    for col, mtype in enumerate(all_types):
+        is_gamma = (mtype == gamma_label)
+
+        if is_gamma:
+            idx = model_labels.index(gamma_label)
+            cfg = gamma_fallback_configs if gamma_fallback_configs is not None \
+                  else _fallback_cfg(configs_set)
+        else:
+            idx = _best_member_index(df_metrics, mtype, model_labels)
+            cfg = configs_set[idx]
+
+        sT, pQ, Q, timesteps = _slice_test_period(
+            transport_output_set[idx], df_set[idx], cfg, dt
+        )
+
+        sel_time_ind, colors = _get_sel_time_ind_and_colors(np.array(Q))
+
+        PQ, ST, QTC, STC = _compute_PQ_ST_QTC_STC(pQ, sT, Q, dt)
+        last_ind = (ST.shape[1] - 1) if last_age_cut is None else (last_age_cut + 1)
+
+        if show_streamflow:
+            ax_ts  = fig.add_subplot(gs[0, col])
+            ax_pq  = fig.add_subplot(gs[1, col])
+            ax_qtc = fig.add_subplot(gs[2, col])
+
+            # ── streamflow ───────────────────────────────────────────────────
+            ax_ts = plot_timeseries(
+                np.array(Q), timesteps=timesteps, ax=ax_ts, title=None,
+                label='Observation',
+                ylabel=Q_units if col == 0 else '',
+                linestyle='.', color='k',
+            )
+            for i, it in enumerate(sel_time_ind):
+                ax_ts.axvline(x=timesteps[it], color=colors[i], alpha=0.7)
+            ax_ts.set(title=mtype, xlabel='')
+            ax_ts.set_xticklabels([])
+            if col > 0:
+                ax_ts.set_yticklabels([])
+            ax_ts.spines[['top', 'right']].set_visible(False)
+        else:
+            ax_pq  = fig.add_subplot(gs[0, col])
+            ax_qtc = fig.add_subplot(gs[1, col])
+            # model label as column title on the P_Q row
+            ax_pq.set_title(mtype, fontsize=small_size)
+
+        # ── P_Q vs S_T ───────────────────────────────────────────────────────
+        for i in range(1, last_ind):
+            ax_pq.plot(ST[:, -i], PQ[:, -i], color='grey', alpha=0.05)
+        for i, it in enumerate(sel_time_ind):
+            ax_pq.plot(ST[:, it], PQ[:, it], color=colors[i], alpha=0.7, linewidth=2)
+        ax_pq.set(
+            xlabel=r'$S_T$ [mm]',
+            ylabel=r'$P_Q$' if col == 0 else '',
+            ylim=[0.0, 1.2],
+        )
+        # row label only on leftmost column, and only when streamflow is shown
+        # (otherwise the model title already sits above this subplot)
+        if show_streamflow and col == 0:
+            ax_pq.set_title(r'$P_Q$ vs $S_T$', fontsize=small_size)
+        if col > 0:
+            ax_pq.set_yticklabels([])
+        ax_pq.spines[['top', 'right']].set_visible(False)
+
+        # # dot legend in top-left P_Q subplot when no streamflow row
+        # if not show_streamflow and col == 0:
+        #     _annotate_flow_dots(ax_pq, colors)
+
+        # ── Q̄_T vs S̄_T ──────────────────────────────────────────────────────
+        for i in range(1, last_ind):
+            ax_qtc.plot(STC[:, -i], QTC[:, -i], color='grey', alpha=0.05)
+        for i, it in enumerate(sel_time_ind):
+            ax_qtc.plot(STC[:, it], QTC[:, it], color=colors[i], alpha=0.7, linewidth=2)
+        ax_qtc.set(
+            xlabel=r'$\bar{S}_T$ [mm]',
+            ylabel=r'$\bar{Q}_T$ [mm d$^{-1}$]' if col == 0 else '',
+            ylim=[0, float(np.array(Q).max())],
+        )
+        if show_streamflow and col == 0:
+            ax_qtc.set_title(r'$\bar{Q}_T$ vs $\bar{S}_T$', fontsize=small_size)
+        if col > 0:
+            ax_qtc.set_yticklabels([])
+        ax_qtc.spines[['top', 'right']].set_visible(False)
+
+    # shared bottom legend
+    handles = _flow_legend_handles(colors)
+    fig.legend(handles=handles, loc='lower center', ncol=3,
+               fontsize=small_size, frameon=False, bbox_to_anchor=(0.5, -0.02))
+    if suptitle:
+        fig.suptitle(suptitle, fontsize=small_size, y=1.01)
+
+    return fig
+
+
+# # ── private helpers ──────────────────────────────────────────────────────────
+ 
+# def _flow_masks(Q_arr, lo=_Q_LO_PERC, hi=_Q_HI_PERC):
+#     """Return boolean masks for low / median / high flow timesteps."""
+#     lo_t = np.nanpercentile(Q_arr, lo)
+#     hi_t = np.nanpercentile(Q_arr, hi)
+#     m45  = np.nanpercentile(Q_arr, 45)
+#     m55  = np.nanpercentile(Q_arr, 55)
+#     return (
+#         Q_arr <= lo_t,
+#         (Q_arr >= m45) & (Q_arr <= m55),
+#         Q_arr >= hi_t,
+#     )
+ 
+ 
+# def _cumPQ(pQ, dt):
+#     """Cumulative TTD P_Q(T, t) = cumsum(pQ * dt, axis=0)."""
+#     return np.cumsum(np.asarray(pQ, dtype=float) * dt, axis=0)
+ 
+ 
+# def _slice_test(transport_output, df, configs, is_gamma, gamma_fallback_configs):
+#     """
+#     Return (sT, pQ, Q_arr, dt) sliced to the test period.
+ 
+#     Parameters
+#     ----------
+#     transport_output       : tuple returned by model.run_transport
+#     df                     : DataFrame for this model
+#     configs                : config dict (None allowed for Γ_dynamic)
+#     is_gamma               : bool
+#     gamma_fallback_configs : configs from any MDN run, used for date range only
+#     """
+#     sT_raw, _, _, pQETs_raw, _, _ = transport_output
+#     cfg = gamma_fallback_configs if is_gamma else configs
+#     dt  = 1.0 if is_gamma else cfg['transport_configs']['transport_specs']['dt']
+ 
+#     test_s = cfg['train_configs']['test_start']
+#     test_e = cfg['train_configs']['test_end']
+#     si = df.index.get_loc(test_s)
+#     ei = df.index.get_loc(test_e)
+ 
+#     sT  = np.asarray(sT_raw[:, si:ei + 1, ...], dtype=float)
+#     pQ  = np.asarray(pQETs_raw[:, si:ei + 1, 0], dtype=float)
+#     if sT.ndim > 2:
+#         sT = sT[..., 0]
+ 
+#     Q_arr = df[test_s:test_e]['Q'].values.astype(float)
+#     return sT, pQ, Q_arr, dt, test_s, test_e
+ 
+ 
+# def _best_member_indices(df_metrics, model_type_str):
+#     """
+#     Return the single model-label string of the best ensemble member
+#     (lowest test-period MSE for C_Q with observed Q) for *model_type_str*.
+#     """
+#     sub = df_metrics[
+#         (df_metrics['model-type'] == model_type_str) &
+#         (df_metrics['varn'] == 'C_Q') &
+#         (df_metrics['train_or_test'] == 'test')
+#     ]
+#     return sub.iloc[sub['mse'].argmin()]['model']
+ 
+ 
+# # ── public API ───────────────────────────────────────────────────────────────
+ 
+# def plot_ttd_comparison_best(
+#     df_metrics,
+#     model_labels,
+#     transport_output_set,
+#     df_set,
+#     configs_set,
+#     model_types=None,
+#     last_age_cut=None,
+#     figsize=(13, 10),
+#     suptitle="TTD comparison — best MDN members vs Γ_dynamic",
+# ):
+#     """
+#     Three-panel figure (1 row × 3 columns, one per flow class) comparing
+#     p_Q(T) from the **best-performing** ensemble member of each MDN
+#     configuration against the single Γ_dynamic run.
+ 
+#     Parameters
+#     ----------
+#     df_metrics            : DataFrame produced by the metrics section of
+#                             Postprocess-UQ.py; used to identify best members.
+#     model_labels          : list[str] – the full model_labels list.
+#     transport_output_set  : list of transport tuples (same order as model_labels).
+#     df_set                : list of DataFrames (same order).
+#     configs_set           : list of config dicts (same order); last entry is
+#                             Γ_dynamic which has no dedicated config — pass
+#                             the same-length list with None as the last element.
+#     model_types           : list[str] – which model types to include;
+#                             defaults to all four in _DEFAULT_MODEL_COLORS.
+#     last_age_cut          : int – maximum age [days] shown on x-axis.
+#     figsize, suptitle     : passed to matplotlib.
+ 
+#     Returns
+#     -------
+#     fig, axes
+#     """
+#     if model_types is None:
+#         model_types = list(_DEFAULT_MODEL_COLORS.keys())
+ 
+#     # Find a valid MDN config to use as fallback for Γ_dynamic date slicing
+#     gamma_fallback_cfg = next(
+#         c for c, ml in zip(configs_set, model_labels)
+#         if c is not None and not ml.startswith(r"$\Gamma")
+#     )
+ 
+#     fig, axes = plt.subplots(1, 3, figsize=figsize, sharey=True)
+#     flow_keys   = ["low", "median", "high"]
+#     flow_titles = ["Low-flow periods", "Median-flow periods", "High-flow periods"]
+ 
+#     # Collect one (sT, pQ) per model type (best member or single Γ run)
+#     collected = {}
+#     for mtype in model_types:
+#         is_gamma = mtype == r"$\Gamma_\text{dynamic}$"
+#         if is_gamma:
+#             idx = model_labels.index(mtype)
+#         else:
+#             best_label = _best_member_indices(df_metrics, mtype)
+#             idx = model_labels.index(best_label)
+ 
+#         cfg = configs_set[idx]
+#         sT, pQ, Q_arr, dt, ts, te = _slice_test(
+#             transport_output_set[idx], df_set[idx],
+#             cfg, is_gamma, gamma_fallback_cfg,
+#         )
+#         PQ = _cumPQ(pQ, dt)
+#         collected[mtype] = dict(sT=sT, PQ=PQ, Q_arr=Q_arr, dt=dt, is_gamma=is_gamma)
+ 
+#     # Use observed Q from any MDN run for consistent flow-class masks
+#     ref_mtype = next(m for m in collected if not collected[m]['is_gamma'])
+#     Q_ref = collected[ref_mtype]['Q_arr']
+#     masks = _flow_masks(Q_ref)
+ 
+#     # Age axis
+#     n_ages = next(iter(collected.values()))['PQ'].shape[0]
+#     dt_ref = next(iter(collected.values()))['dt']
+#     ages   = np.arange(n_ages) * dt_ref
+#     am     = ages <= last_age_cut if last_age_cut else np.ones(n_ages, bool)
+ 
+#     for ax, mask, title in zip(axes, masks, flow_titles):
+#         for mtype in model_types:
+#             if mtype not in collected:
+#                 continue
+#             d     = collected[mtype]
+#             color = _DEFAULT_MODEL_COLORS[mtype]
+#             PQm  = d['PQ'][am, :][:, mask].mean(axis=1)   # avg over sel. times
+#             ls    = _GAMMA_LS if d['is_gamma'] else "-"
+#             lw    = 1.8 if d['is_gamma'] else 2.2
+#             ax.plot(ages[am], PQm, color=color, ls=ls, lw=lw, label=mtype)
+ 
+#         ax.set(xlabel="Age $T$ [days]",
+#                ylabel=r"$P_Q(T,t)$  [days$^{-1}$]" if ax is axes[0] else "",
+#                title=title, xlim=[0, ages[am].max()])
+#         ax.set_ylim(bottom=0)
+#         ax.spines[['top', 'right']].set_visible(False)
+ 
+#     # Shared legend in rightmost axis
+#     handles, labels = axes[-1].get_legend_handles_labels()
+#     axes[-1].legend(handles, labels, fontsize=9, frameon=False,
+#                     loc='upper right')
+ 
+#     fig.suptitle(suptitle, fontsize=12)
+#     plt.tight_layout()
+#     return fig, axes
+ 
+ 
+# def plot_PQ_ST_comparison_best(
+#     df_metrics,
+#     model_labels,
+#     transport_output_set,
+#     df_set,
+#     configs_set,
+#     model_types=None,
+#     figsize=(12, 5),
+#     suptitle=r"$P_Q$–$S_T$ and $\bar{Q}_T$–$\bar{S}_T$: best members vs Γ_dynamic",
+# ):
+#     """
+#     Two-panel figure:
+#       Left  — P_Q(T) vs S_T    (cumulative TTD vs age-ranked storage)
+#       Right — Q̄_T  vs S̄_T    (old-water discharge vs old-water storage)
+ 
+#     One line per model type (best MDN member; single Γ_dynamic line).
+#     Three flow quantiles (low / median / high) shown via linestyle.
+ 
+#     Returns
+#     -------
+#     fig, axes
+#     """
+#     if model_types is None:
+#         model_types = list(_DEFAULT_MODEL_COLORS.keys())
+ 
+#     gamma_fallback_cfg = next(
+#         c for c, ml in zip(configs_set, model_labels)
+#         if c is not None and not ml.startswith(r"$\Gamma")
+#     )
+ 
+#     fig, axes = plt.subplots(1, 2, figsize=figsize)
+#     ax_PQ, ax_QT = axes
+ 
+#     collected = {}
+#     for mtype in model_types:
+#         is_gamma = mtype == r"$\Gamma_\text{dynamic}$"
+#         idx = (model_labels.index(mtype) if is_gamma
+#                else model_labels.index(_best_member_indices(df_metrics, mtype)))
+#         cfg = configs_set[idx]
+#         sT, pQ, Q_arr, dt, ts, te = _slice_test(
+#             transport_output_set[idx], df_set[idx],
+#             cfg, is_gamma, gamma_fallback_cfg,
+#         )
+#         collected[mtype] = dict(sT=sT, pQ=pQ, Q_arr=Q_arr, dt=dt, is_gamma=is_gamma)
+ 
+#     ref_mtype = next(m for m in collected if not collected[m]['is_gamma'])
+#     Q_ref  = collected[ref_mtype]['Q_arr']
+#     masks  = _flow_masks(Q_ref[:-1])
+#     fkeys  = ["low", "median", "high"]
+ 
+#     model_handles = []
+#     flow_handles  = []
+ 
+#     for mtype in model_types:
+#         if mtype not in collected:
+#             continue
+#         d     = collected[mtype]
+#         color = _DEFAULT_MODEL_COLORS[mtype]
+#         PQ  = _cumPQ(d['pQ'], d['dt'])   # (n_ages, n_time)
+#         sT    = d['sT']
+#         ST = jnp.cumsum(sT[:,1:], axis=0) * dt
+#         Q = d['Q_arr']
+#         S = ST[-1,:]
+#         QT = jax.vmap(lambda a,b: a*b, in_axes=(0,1), out_axes=1)(Q, PQ)
+#         STC = jax.vmap(lambda a,b: a-b, in_axes=(0,1), out_axes=1)(S, ST)
+#         QTC = jax.vmap(lambda a,b: a-b, in_axes=(0,1), out_axes=1)(Q, QT)
+ 
+#         for mask, fkey in zip(masks, fkeys):
+#             ls = _GAMMA_LS if d['is_gamma'] else _FLOW_LS[fkey]
+#             lw = _FLOW_LW[fkey] * (0.85 if d['is_gamma'] else 1.0)
+ 
+#             PQm = PQ[:, mask].mean(axis=1)     # (n_ages,)
+#             STm = ST[:, mask].mean(axis=1)
+#             STCm = STC[:, mask].mean()
+#             QTCm = QTC[:, mask].mean()
+ 
+#             # QTbar = (1.0 - PQ_t) * Qm
+#             # STbar = Sm - ST_t
+ 
+#             ax_PQ.plot(STm, PQm, color=color, ls=ls, lw=lw)
+#             ax_QT.plot(STCm, QTCm, color=color, ls=ls, lw=lw)
+#             # sort_i = np.argsort(STCm)
+#             # ax_QT.plot(STCm[sort_i], QTCm[sort_i], color=color, ls=ls, lw=lw)
+ 
+#         model_handles.append(
+#             Line2D([0], [0], color=color,
+#                    ls=_GAMMA_LS if d['is_gamma'] else "-",
+#                    lw=2, label=mtype)
+#         )
+ 
+#     for fkey in fkeys:
+#         flow_handles.append(
+#             Line2D([0], [0], color='gray',
+#                    ls=_FLOW_LS[fkey], lw=_FLOW_LW[fkey],
+#                    label={"low": "Low flow", "median": "Median flow",
+#                           "high": "High flow"}[fkey])
+#         )
+ 
+#     ax_PQ.set(xlabel=r"Age-ranked storage $S_T$ [mm]",
+#               ylabel=r"Cumulative TTD $P_Q(T)$ [–]",
+#               ylim=[0, 1])
+#     ax_PQ.spines[['top', 'right']].set_visible(False)
+ 
+#     ax_QT.set(xlabel=r"Old-water storage $\bar{S}_T$ [mm]",
+#               ylabel=r"Old-water discharge $\bar{Q}_T$ [mm d$^{-1}$]")
+#     ax_QT.set_ylim(bottom=0)
+#     ax_QT.spines[['top', 'right']].set_visible(False)
+ 
+#     fig.legend(handles=model_handles + flow_handles,
+#                loc='lower center', ncol=len(model_handles) + len(flow_handles),
+#                fontsize=9, frameon=False, bbox_to_anchor=(0.5, -0.12))
+ 
+#     fig.suptitle(suptitle, fontsize=11)
+#     plt.tight_layout()
+#     return fig, axes
+ 
+ 
+# def plot_ttd_and_PQST_4col(
+#     df_metrics,
+#     model_labels,
+#     transport_output_set,
+#     df_set,
+#     configs_set,
+#     model_types=None,
+#     figsize=(15, 13),
+#     suptitle="SAS model comparison — Oak Creek (test period)",
+# ):
+#     """
+#     Manuscript-ready 4-column composite figure (one column per model type).
+ 
+#     Row 0  — Shared streamflow time series with flow-class scatter overlay
+#               (spans all columns).
+#     Row 1  — P_Q vs S_T  (low / median / high flow; linestyle-coded).
+#     Row 2  — Q̄_T vs S̄_T (same).
+ 
+#     Γ_dynamic uses dashed lines throughout; the three MDN types use solid
+#     lines colour-coded by model type, with linestyle encoding flow quantile.
+ 
+#     Returns
+#     -------
+#     fig
+#     """
+#     if model_types is None:
+#         model_types = list(_DEFAULT_MODEL_COLORS.keys())
+ 
+#     gamma_fallback_cfg = next(
+#         c for c, ml in zip(configs_set, model_labels)
+#         if c is not None and not ml.startswith(r"$\Gamma")
+#     )
+ 
+#     n_cols = len(model_types)
+#     fig = plt.figure(figsize=figsize)
+#     gs  = gridspec.GridSpec(
+#         3, n_cols,
+#         height_ratios=[0.55, 1.0, 1.0],
+#         hspace=0.42, wspace=0.28,
+#     )
+ 
+#     # ── collect best-member data ──────────────────────────────────────────────
+#     collected = {}
+#     for mtype in model_types:
+#         is_gamma = mtype == r"$\Gamma_\text{dynamic}$"
+#         idx = (model_labels.index(mtype) if is_gamma
+#                else model_labels.index(_best_member_indices(df_metrics, mtype)))
+#         cfg = configs_set[idx]
+#         sT, pQ, Q_arr, dt, ts, te = _slice_test(
+#             transport_output_set[idx], df_set[idx],
+#             cfg, is_gamma, gamma_fallback_cfg,
+#         )
+#         collected[mtype] = dict(
+#             sT=sT, pQ=pQ, Q_arr=Q_arr, dt=dt,
+#             is_gamma=is_gamma, df=df_set[idx], ts=ts, te=te,
+#         )
+ 
+#     ref_mtype  = next(m for m in collected if not collected[m]['is_gamma'])
+#     Q_ref      = collected[ref_mtype]['Q_arr']
+#     df_ref     = collected[ref_mtype]['df']
+#     ts_ref, te_ref = collected[ref_mtype]['ts'], collected[ref_mtype]['te']
+#     masks      = _flow_masks(Q_ref[:-1])
+#     fkeys      = ["low", "median", "high"]
+ 
+#     # ── Row 0: streamflow (span all columns) ─────────────────────────────────
+#     ax_Q = fig.add_subplot(gs[0, :])
+#     ax_Q.plot(df_ref[ts_ref:te_ref].index, Q_ref,
+#               color='steelblue', lw=0.75, alpha=0.75, zorder=1)
+#     for mask, fkey in zip(masks, fkeys):
+#         ax_Q.scatter(
+#             df_ref[ts_ref:te_ref].index[mask], Q_ref[mask],
+#             s=4, color=_FLOW_COLORS[fkey],
+#             label={"low": "Low flow", "median": "Median flow",
+#                    "high": "High flow"}[fkey],
+#             alpha=0.6, zorder=3,
+#         )
+#     ax_Q.set(ylabel="$Q$ [mm d$^{-1}$]", title="Observed streamflow — test period")
+#     ax_Q.spines[['top', 'right']].set_visible(False)
+#     ax_Q.legend(loc='upper right', fontsize=9, frameon=False, markerscale=3)
+ 
+#     # ── Rows 1 & 2 per column ────────────────────────────────────────────────
+#     axes_PQ, axes_QT = [], []
+ 
+#     for ci, mtype in enumerate(model_types):
+#         if mtype not in collected:
+#             continue
+#         d        = collected[mtype]
+#         color    = _DEFAULT_MODEL_COLORS[mtype]
+#         is_gamma = d['is_gamma']
+#         PQ = _cumPQ(d['pQ'], d['dt'])
+#         sT = d['sT']
+#         ST = jnp.cumsum(sT[:,1:], axis=0) * dt
+#         Q = d['Q_arr']
+#         S = ST[-1,:]
+#         QT = jax.vmap(lambda a,b: a*b, in_axes=(0,1), out_axes=1)(Q, PQ)
+#         STC = jax.vmap(lambda a,b: a-b, in_axes=(0,1), out_axes=1)(S, ST)
+#         QTC = jax.vmap(lambda a,b: a-b, in_axes=(0,1), out_axes=1)(Q, QT)
+ 
+#         ax_PQ = fig.add_subplot(gs[1, ci])
+#         ax_QT = fig.add_subplot(gs[2, ci])
+#         axes_PQ.append(ax_PQ)
+#         axes_QT.append(ax_QT)
+ 
+#         for mask, fkey in zip(masks, fkeys):
+#             fcolor = _FLOW_COLORS[fkey]
+#             ls     = _GAMMA_LS if is_gamma else _FLOW_LS[fkey]
+#             lw     = _FLOW_LW[fkey] * (0.9 if is_gamma else 1.0)
+ 
+#             # PQ_t  = PQ_c[:, mask].mean(axis=1)
+#             # ST_t  = sT[:, mask].mean(axis=1)
+#             # Qm    = Q_obs[mask].mean()
+#             # Sm    = sT[-1, mask].mean()
+#             # QTbar = (1.0 - PQ_t) * Qm
+#             # STbar = Sm - ST_t
+
+#             PQm = PQ[:, mask].mean(axis=1)     # (n_ages,)
+#             STm = ST[:, mask].mean(axis=1)
+#             # Qm   = Q[mask].mean()
+#             # Sm   = S[mask].mean()             # total S ≈ S_T at max age
+#             STCm = STC[:, mask].mean()
+#             QTCm = QTC[:, mask].mean()
+
+ 
+#             ax_PQ.plot(STm, PQm, color=fcolor, ls=ls, lw=lw)
+#             ax_QT.plot(STCm, QTCm, color=fcolor, ls=ls, lw=lw)
+#             # sort_i = np.argsort(STCm)
+#             # ax_QT.plot(STCm[sort_i], QTCm[sort_i], color=fcolor, ls=ls, lw=lw)
+ 
+#         # Column title coloured by model type
+#         ax_PQ.set_title(mtype, color=color, fontsize=10, fontweight='bold')
+ 
+#         # y-labels only on leftmost column
+#         ax_PQ.set(ylim=[0, 1],
+#                   xlabel=r"$S_T$ [mm]",
+#                   ylabel=r"$P_Q(T)$ [–]" if ci == 0 else "")
+#         ax_QT.set(xlabel=r"$\bar{S}_T$ [mm]",
+#                   ylabel=r"$\bar{Q}_T$ [mm d$^{-1}$]" if ci == 0 else "")
+#         ax_QT.set_ylim(bottom=0)
+#         for ax in (ax_PQ, ax_QT):
+#             ax.spines[['top', 'right']].set_visible(False)
+#             if ci > 0:
+#                 ax.set_yticklabels([])
+ 
+#     # ── Shared legend: flow-quantile linestyles ───────────────────────────────
+#     flow_handles = [
+#         Line2D([0], [0], color=_FLOW_COLORS[fk],
+#                ls=_FLOW_LS[fk], lw=_FLOW_LW[fk],
+#                label={"low": "Low flow", "median": "Median flow",
+#                       "high": "High flow"}[fk])
+#         for fk in fkeys
+#     ]
+#     flow_handles.append(
+#         Line2D([0], [0], color='gray', ls=_GAMMA_LS, lw=1.5,
+#                label=r"$\Gamma_\text{dynamic}$ (dashed)")
+#     )
+#     fig.legend(handles=flow_handles, loc='lower center', ncol=4,
+#                fontsize=9, frameon=False, bbox_to_anchor=(0.5, -0.02))
+ 
+#     fig.suptitle(suptitle, fontsize=12, y=1.01)
+#     return fig

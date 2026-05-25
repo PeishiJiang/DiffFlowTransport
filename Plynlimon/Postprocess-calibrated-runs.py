@@ -38,6 +38,7 @@ model_names = [
     'mdn2-couplingtype4-logQ-rd1-mlpd2-mlpw10',
     'mdn2-couplingtype4-logQ-rd1234-mlpd2-mlpw10',
     'mdn2-couplingtype4-logQ-rd10-mlpd2-mlpw10',
+    'mdn2-couplingtype4-logQ-rd20-mlpd2-mlpw10',
     'mdn2-couplingtype4-logQ-rd42-mlpd3-mlpw20',
     'mdn2-couplingtype4-logQ-rd42-mlpd4-mlpw16',
     'mdn2-couplingtype4-logQ-rd42-mlpd5-mlpw12',
@@ -47,11 +48,23 @@ model_names = [
     'mdn2-couplingtype1-logQ-rd1-mlpd2-mlpw10',
     'mdn2-couplingtype1-logQ-rd1234-mlpd2-mlpw10',
     'mdn2-couplingtype1-logQ-rd10-mlpd2-mlpw10',
+    'mdn2-couplingtype1-logQ-rd20-mlpd2-mlpw10',
     'mdn2-couplingtype1-logQ-rd42-mlpd3-mlpw20',
     'mdn2-couplingtype1-logQ-rd42-mlpd4-mlpw16',
     'mdn2-couplingtype1-logQ-rd42-mlpd5-mlpw12',
     'mdn2-couplingtype1-logQ-rd42-mlpd6-mlpw8',
     'mdn2-couplingtype1-logQ-rd42-mlpd7-mlpw4',
+    'mdn2-couplingtype1-logQ-rd42-mlpd7-mlpw4',
+    'mdn2-couplingtype3-logQ-rd0-mlpd2-mlpw10',
+    'mdn2-couplingtype3-logQ-rd1-mlpd2-mlpw10',
+    'mdn2-couplingtype3-logQ-rd1234-mlpd2-mlpw10',
+    'mdn2-couplingtype3-logQ-rd10-mlpd2-mlpw10',
+    'mdn2-couplingtype3-logQ-rd20-mlpd2-mlpw10',
+    'mdn2-couplingtype3-logQ-rd42-mlpd3-mlpw20',
+    'mdn2-couplingtype3-logQ-rd42-mlpd4-mlpw16',
+    'mdn2-couplingtype3-logQ-rd42-mlpd5-mlpw12',
+    'mdn2-couplingtype3-logQ-rd42-mlpd6-mlpw8',
+    'mdn2-couplingtype3-logQ-rd42-mlpd7-mlpw4',
 ]
 # model_labels = [
 #     r'$\Gamma_\text{static}$', 
@@ -62,7 +75,8 @@ model_names = [
 #     r'MDN$_\text{LSTM}$-rain'
 # ]
 
-saved_folder = Path("./models-rev2")
+saved_folder = Path("./models-rev3")
+# saved_folder = Path("./models-rev2")
 
 f_configs_set = [f'configs-{model}.json' for model in model_names]
 f_sim_set = [f'sim-{model}.pkl' for model in model_names]

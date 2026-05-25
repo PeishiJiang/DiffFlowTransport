@@ -25,6 +25,7 @@ from DiffFlowTransport.utils.plot import plot_timeseries_obs_1to1, plot_PQET_qua
 # from DiffFlowTransport.utils.plot import plot_flow_transport_assessment2,plot_PQET_ST_esspi_ensemble
 from DiffFlowTransport.utils.plot import plot_PQ_ST_ensemble, plot_PQ_ensemble
 from DiffFlowTransport.utils.plot import plot_young_water_withQ_ensemble, plot_mdn_weights_ensemble
+from DiffFlowTransport.utils.plot import plot_ttd_comparison_best, plot_PQ_ST_comparison_best, plot_ttd_and_PQST_4col
 from DiffFlowTransport.utils import compute_metrics
 from DiffFlowTransport.model import load_model
 
@@ -418,7 +419,7 @@ for j, metric in enumerate(metrics):
     #     labels = [varn_labels[i] for i,l in enumerate(labels)]
     #     ax.legend(handles, labels, ncols=2, frameon=False, bbox_to_anchor=(-0.5, -0.15), title="")
 plt.subplots_adjust(wspace=0.35, hspace=0.25);
-plt.suptitle('Oak Creek Watershed');
+plt.suptitle('Lower Hafren Watershed');
 plt.savefig('./figs/performances2.png', dpi=150, bbox_inches="tight")
 
 
@@ -443,7 +444,7 @@ for j, metric in enumerate(metrics):
     #     labels = [varn_labels[i] for i,l in enumerate(labels)]
     #     ax.legend(handles, labels, ncols=2, frameon=False, bbox_to_anchor=(-0.5, -0.15), title="")
 plt.subplots_adjust(wspace=0.35, hspace=0.25);
-plt.suptitle('Oak Creek Watershed');
+plt.suptitle('Lower Hafren Watershed');
 plt.savefig('./figs/performances2-kge.png', dpi=150, bbox_inches="tight")
 
 
@@ -582,360 +583,500 @@ plt.savefig(f'./figs/timeseries-best-op.png', dpi=150)
 
 
 # %% [markdown]
-# # TTDs assessment
-del transport_data_set
-import gc
-gc.collect()
-
+# # Intercomparison between Gamma and MDN
+# ## Step 1 — identify the best member index per MDN configuration
+ 
 # %%
-sT_set, pQ_set = [], []
-model_type = 'MDN$_{\\text{LSTM}}$'
-for i,model_label in enumerate(model_labels):
-    if not model_label.startswith(model_type): continue
-    if model_label == '$\\Gamma_\\text{dynamic}$':
-        df = df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-    else:
-        configs, df = configs_set[i], df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-        test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
-        dt = configs['transport_configs']['transport_specs']['dt']
-
-    test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
-    df_plot = df[test_s:test_e]
-    sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
-
-    sT_set.append(sT_plot)
-    pQ_set.append(pQ_plot)
-
-plot_PQ_ensemble(
-    Q=df_plot.Q.values, pQ_set=pQ_set, sT_set=sT_set, dt=dt, timesteps=df_plot.index,
-    last_age_cut=None, figsize=(7, 7), label=model_type, plot_all_PQs=True, plot_sel_time_style='sd'
-);
-plt.savefig(f'./figs/ttds-{model_type}.png', dpi=150, bbox_inches="tight")
-
-
-# %%
-sT_set, pQ_set = [], []
-model_type = 'MDN$_{Q}$'
-for i,model_label in enumerate(model_labels):
-    if not model_label.startswith(model_type): continue
-    if model_label == '$\\Gamma_\\text{dynamic}$':
-        df = df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-    else:
-        configs, df = configs_set[i], df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-        test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
-        dt = configs['transport_configs']['transport_specs']['dt']
-
-    test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
-    df_plot = df[test_s:test_e]
-    sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
-
-    sT_set.append(sT_plot)
-    pQ_set.append(pQ_plot)
-
-plot_PQ_ensemble(
-    Q=df_plot.Q.values, pQ_set=pQ_set, sT_set=sT_set, dt=dt, timesteps=df_plot.index,
-    last_age_cut=None, figsize=(7, 7), label=model_type, plot_all_PQs=True, plot_sel_time_style='sd'
-);
-plt.savefig(f'./figs/ttds-{model_type}.png', dpi=150, bbox_inches="tight")
-
-
-# %%
-sT_set, pQ_set = [], []
-model_type = 'MDN$_{Q,\\text{LSTM}}$'
-for i,model_label in enumerate(model_labels):
-    if not model_label.startswith(model_type): continue
-    if model_label == '$\\Gamma_\\text{dynamic}$':
-        df = df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-    else:
-        configs, df = configs_set[i], df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-        test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
-        dt = configs['transport_configs']['transport_specs']['dt']
-
-    test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
-    df_plot = df[test_s:test_e]
-    sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
-
-    sT_set.append(sT_plot)
-    pQ_set.append(pQ_plot)
-
-plot_PQ_ensemble(
-    Q=df_plot.Q.values, pQ_set=pQ_set, sT_set=sT_set, dt=dt, timesteps=df_plot.index,
-    last_age_cut=None, figsize=(7, 7), label=model_type, plot_all_PQs=True, plot_sel_time_style='sd'
-);
-plt.savefig(f'./figs/ttds-{model_type}.png', dpi=150, bbox_inches="tight")
-
-
+MDN_TYPES   = [
+    r'MDN$_{\text{LSTM}}$',
+    r'MDN$_{Q}$',
+    r'MDN$_{Q,\text{LSTM}}$',
+]
+GAMMA_LABEL = r'$\Gamma_\text{dynamic}$'
+ 
+best_indices = {}   # mtype → int index into model_labels / *_set lists
+ 
+for mtype in MDN_TYPES:
+    sub = df_metrics[
+        (df_metrics['model-type'] == mtype) &
+        (df_metrics['varn'] == 'C_Q') &
+        (df_metrics['train_or_test'] == 'test')
+    ]
+    best_label = sub.iloc[sub['mse'].argmin()]['model']
+    best_indices[mtype] = model_labels.index(best_label)
+    print(f"{mtype:35s}  →  {best_label}  (test MSE = {sub['mse'].min():.5f})")
+ 
+best_indices[GAMMA_LABEL] = model_labels.index(GAMMA_LABEL)
+print(f"{GAMMA_LABEL:35s}  →  {GAMMA_LABEL}")
+ 
 # %% [markdown]
-# # TTDs assessment - MDN
-
+# ## Step 2 — trim unused ensemble members to free memory
+ 
 # %%
-distributions = [r'$w_\mathcal{N}$', r'$w_\mathcal{U}$', r'$w_\Gamma$']
-
+keep_idx = set(best_indices.values())
+drop_idx = sorted(
+    [i for i in range(len(model_labels)) if i not in keep_idx],
+    reverse=True,
+)
+print(f"Keeping {len(keep_idx)} models, dropping {len(drop_idx)} ensemble members.")
+ 
+for i in drop_idx:
+    del transport_output_set[i]
+    del transport_output_set_noQ[i]
+    del flow_output_set[i]
+    del df_set[i]
+    del model_set[i]
+    del loss_set[i]
+    del flow_dl_set[i]
+    del transport_data_set[i]
+    del configs_set[i]
+    del model_labels[i]
+    del model_names[i]
+ 
+print("Remaining models after trimming:")
+for i, ml in enumerate(model_labels):
+    print(f"  [{i}] {ml}")
+ 
+import gc; gc.collect()
+ 
+# %% [markdown]
+# ## Step 3 — build gamma_fallback_configs
+#
+# Γ_dynamic was never assigned a configs_set entry (it is None at its position).
+# Pass the configs of any MDN model so the helper functions can read test dates.
+ 
 # %%
-mdn_w_set = []
-model_type = 'MDN$_{\\text{LSTM}}$'
-# MDN weights
-for i,model_label in enumerate(model_labels):
-    if not model_label.startswith(model_type): continue
-
-    if model_label == '$\\Gamma_\\text{dynamic}$':
-        df = df_set[i]
-        flow_dl, transport_data = flow_dl_set[i], transport_data_set[i]
-        J, Q, ET, C_J, C_Q_J, time = transport_data
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-    else:
-        configs, df = configs_set[i], df_set[i]
-        flow_dl, transport_data = flow_dl_set[i], transport_data_set[i]
-        J, Q, ET, C_J, C_Q_J, time = transport_data
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-        dt = configs['transport_configs']['transport_specs']['dt']
-        test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
-
-    model = model_set[i]
-    mdn_w = model.get_mdn_weights(Q=Q, dl=flow_dl)
-
-    test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
-    df_plot = df[test_s:test_e]
-    mdn_w = mdn_w[test_s_ind:test_e_ind+1]
-    mdn_w_set.append(mdn_w)
-
-plot_mdn_weights_ensemble(
-    Q=df_plot.Q.values, mdn_w_set=mdn_w_set, timesteps=df_plot.index,
-    mdn_dists=distributions, figsize=(7,6), label=model_type,
-);
-plt.savefig(f'./figs/ttds-mdnweights-{model_type}.png', dpi=150, bbox_inches="tight")
-
+gamma_pos = model_labels.index(GAMMA_LABEL)
+ 
+# Insert None placeholder if missing (keeps list aligned with model_labels)
+if len(configs_set) < len(model_labels):
+    configs_set.insert(gamma_pos, None)
+elif configs_set[gamma_pos] is not None:
+    configs_set[gamma_pos] = None
+ 
+# Fallback: first non-None config for date slicing inside the plot functions
+gamma_fallback_configs = next(c for c in configs_set if c is not None)
+ 
+# dt from any MDN config (all use the same transport time step)
+dt = gamma_fallback_configs['transport_configs']['transport_specs']['dt']
+ 
+# %% [markdown]
+# ## Step 4 — generate comparison figures
+ 
 # %%
-mdn_w_set = []
-model_type = 'MDN$_{Q}$'
-# MDN weights
-for i,model_label in enumerate(model_labels):
-    if not model_label.startswith(model_type): continue
+# Figure A — p_Q vs T, one row per model type
+fig_A, _ = plot_ttd_comparison_best(
+    df_metrics=df_metrics,
+    model_labels=model_labels,
+    transport_output_set=transport_output_set,
+    df_set=df_set,
+    configs_set=configs_set,
+    mdn_model_types=MDN_TYPES,
+    gamma_label=GAMMA_LABEL,
+    gamma_fallback_configs=gamma_fallback_configs,
+    dt=dt,
+    last_age_cut=None,
+    figsize=(14, 3),
+    suptitle=''
+    # suptitle='TTD comparison — best MDN members vs $\\Gamma_\\text{dynamic}$  (Lower Hafren, test period)',
+)
+plt.savefig('./figs/ttd-comparison-best.png', dpi=150, bbox_inches='tight')
+ 
+# %%
+# Figure B — P_Q–S_T and Q̄_T–S̄_T, one row per model type
+fig_B, _ = plot_PQ_ST_comparison_best(
+    df_metrics=df_metrics,
+    model_labels=model_labels,
+    transport_output_set=transport_output_set,
+    df_set=df_set,
+    configs_set=configs_set,
+    mdn_model_types=MDN_TYPES,
+    gamma_label=GAMMA_LABEL,
+    gamma_fallback_configs=gamma_fallback_configs,
+    dt=dt,
+    last_age_cut=None,
+    figsize=(14, 5),
+    suptitle=''
+    # suptitle=(r"$P_Q$–$S_T$ and $\bar{Q}_T$–$\bar{S}_T$: "
+    #           r"best members vs $\Gamma_\text{dynamic}$ (Lower Hafren, test period)"),
+)
+plt.savefig('./figs/PQ-ST-comparison-best.png', dpi=150, bbox_inches='tight')
+ 
+# %%
+# Figure C — 4-column manuscript composite (recommended for revised Fig. 10)
+fig_C = plot_ttd_and_PQST_4col(
+    df_metrics=df_metrics,
+    model_labels=model_labels,
+    transport_output_set=transport_output_set,
+    df_set=df_set,
+    configs_set=configs_set,
+    mdn_model_types=MDN_TYPES,
+    gamma_label=GAMMA_LABEL,
+    gamma_fallback_configs=gamma_fallback_configs,
+    dt=dt,
+    last_age_cut=None,
+    figsize=(16, 10),
+    suptitle=''
+    # suptitle='SAS model comparison — Lower Hafren (test period)',
+)
+plt.savefig('./figs/ttd-PQST-4col-best.png', dpi=150, bbox_inches='tight')
 
-    if model_label == '$\\Gamma_\\text{dynamic}$':
-        df = df_set[i]
-        flow_dl, transport_data = flow_dl_set[i], transport_data_set[i]
-        J, Q, ET, C_J, C_Q_J, time = transport_data
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-    else:
-        configs, df = configs_set[i], df_set[i]
-        flow_dl, transport_data = flow_dl_set[i], transport_data_set[i]
-        J, Q, ET, C_J, C_Q_J, time = transport_data
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-        dt = configs['transport_configs']['transport_specs']['dt']
-        test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
+
+# # %% [markdown]
+# # # TTDs assessment
+# del transport_data_set
+# import gc
+# gc.collect()
+
+# # %%
+# sT_set, pQ_set = [], []
+# model_type = 'MDN$_{\\text{LSTM}}$'
+# for i,model_label in enumerate(model_labels):
+#     if not model_label.startswith(model_type): continue
+#     if model_label == '$\\Gamma_\\text{dynamic}$':
+#         df = df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#     else:
+#         configs, df = configs_set[i], df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#         test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
+#         dt = configs['transport_configs']['transport_specs']['dt']
+
+#     test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
+#     df_plot = df[test_s:test_e]
+#     sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
+
+#     sT_set.append(sT_plot)
+#     pQ_set.append(pQ_plot)
+
+# plot_PQ_ensemble(
+#     Q=df_plot.Q.values, pQ_set=pQ_set, sT_set=sT_set, dt=dt, timesteps=df_plot.index,
+#     last_age_cut=None, figsize=(7, 7), label=model_type, plot_all_PQs=True, plot_sel_time_style='sd'
+# );
+# plt.savefig(f'./figs/ttds-{model_type}.png', dpi=150, bbox_inches="tight")
+
+
+# # %%
+# sT_set, pQ_set = [], []
+# model_type = 'MDN$_{Q}$'
+# for i,model_label in enumerate(model_labels):
+#     if not model_label.startswith(model_type): continue
+#     if model_label == '$\\Gamma_\\text{dynamic}$':
+#         df = df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#     else:
+#         configs, df = configs_set[i], df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#         test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
+#         dt = configs['transport_configs']['transport_specs']['dt']
+
+#     test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
+#     df_plot = df[test_s:test_e]
+#     sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
+
+#     sT_set.append(sT_plot)
+#     pQ_set.append(pQ_plot)
+
+# plot_PQ_ensemble(
+#     Q=df_plot.Q.values, pQ_set=pQ_set, sT_set=sT_set, dt=dt, timesteps=df_plot.index,
+#     last_age_cut=None, figsize=(7, 7), label=model_type, plot_all_PQs=True, plot_sel_time_style='sd'
+# );
+# plt.savefig(f'./figs/ttds-{model_type}.png', dpi=150, bbox_inches="tight")
+
+
+# # %%
+# sT_set, pQ_set = [], []
+# model_type = 'MDN$_{Q,\\text{LSTM}}$'
+# for i,model_label in enumerate(model_labels):
+#     if not model_label.startswith(model_type): continue
+#     if model_label == '$\\Gamma_\\text{dynamic}$':
+#         df = df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#     else:
+#         configs, df = configs_set[i], df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#         test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
+#         dt = configs['transport_configs']['transport_specs']['dt']
+
+#     test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
+#     df_plot = df[test_s:test_e]
+#     sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
+
+#     sT_set.append(sT_plot)
+#     pQ_set.append(pQ_plot)
+
+# plot_PQ_ensemble(
+#     Q=df_plot.Q.values, pQ_set=pQ_set, sT_set=sT_set, dt=dt, timesteps=df_plot.index,
+#     last_age_cut=None, figsize=(7, 7), label=model_type, plot_all_PQs=True, plot_sel_time_style='sd'
+# );
+# plt.savefig(f'./figs/ttds-{model_type}.png', dpi=150, bbox_inches="tight")
+
+
+# # %% [markdown]
+# # # TTDs assessment - MDN
+
+# # %%
+# distributions = [r'$w_\mathcal{N}$', r'$w_\mathcal{U}$', r'$w_\Gamma$']
+
+# # %%
+# mdn_w_set = []
+# model_type = 'MDN$_{\\text{LSTM}}$'
+# # MDN weights
+# for i,model_label in enumerate(model_labels):
+#     if not model_label.startswith(model_type): continue
+
+#     if model_label == '$\\Gamma_\\text{dynamic}$':
+#         df = df_set[i]
+#         flow_dl, transport_data = flow_dl_set[i], transport_data_set[i]
+#         J, Q, ET, C_J, C_Q_J, time = transport_data
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#     else:
+#         configs, df = configs_set[i], df_set[i]
+#         flow_dl, transport_data = flow_dl_set[i], transport_data_set[i]
+#         J, Q, ET, C_J, C_Q_J, time = transport_data
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#         dt = configs['transport_configs']['transport_specs']['dt']
+#         test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
+
+#     model = model_set[i]
+#     mdn_w = model.get_mdn_weights(Q=Q, dl=flow_dl)
+
+#     test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
+#     df_plot = df[test_s:test_e]
+#     mdn_w = mdn_w[test_s_ind:test_e_ind+1]
+#     mdn_w_set.append(mdn_w)
+
+# plot_mdn_weights_ensemble(
+#     Q=df_plot.Q.values, mdn_w_set=mdn_w_set, timesteps=df_plot.index,
+#     mdn_dists=distributions, figsize=(7,6), label=model_type,
+# );
+# plt.savefig(f'./figs/ttds-mdnweights-{model_type}.png', dpi=150, bbox_inches="tight")
+
+# # %%
+# mdn_w_set = []
+# model_type = 'MDN$_{Q}$'
+# # MDN weights
+# for i,model_label in enumerate(model_labels):
+#     if not model_label.startswith(model_type): continue
+
+#     if model_label == '$\\Gamma_\\text{dynamic}$':
+#         df = df_set[i]
+#         flow_dl, transport_data = flow_dl_set[i], transport_data_set[i]
+#         J, Q, ET, C_J, C_Q_J, time = transport_data
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#     else:
+#         configs, df = configs_set[i], df_set[i]
+#         flow_dl, transport_data = flow_dl_set[i], transport_data_set[i]
+#         J, Q, ET, C_J, C_Q_J, time = transport_data
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#         dt = configs['transport_configs']['transport_specs']['dt']
+#         test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
     
-    model = model_set[i]
-    mdn_w = model.get_mdn_weights(Q=Q, dl=flow_dl)
+#     model = model_set[i]
+#     mdn_w = model.get_mdn_weights(Q=Q, dl=flow_dl)
 
-    test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
-    df_plot = df[test_s:test_e]
-    mdn_w = mdn_w[test_s_ind:test_e_ind+1]
-    mdn_w_set.append(mdn_w)
+#     test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
+#     df_plot = df[test_s:test_e]
+#     mdn_w = mdn_w[test_s_ind:test_e_ind+1]
+#     mdn_w_set.append(mdn_w)
 
-plot_mdn_weights_ensemble(
-    Q=df_plot.Q.values, mdn_w_set=mdn_w_set, timesteps=df_plot.index,
-    mdn_dists=distributions, figsize=(7,6), label=model_type,
-);
-plt.savefig(f'./figs/ttds-mdnweights-{model_type}.png', dpi=150, bbox_inches="tight")
+# plot_mdn_weights_ensemble(
+#     Q=df_plot.Q.values, mdn_w_set=mdn_w_set, timesteps=df_plot.index,
+#     mdn_dists=distributions, figsize=(7,6), label=model_type,
+# );
+# plt.savefig(f'./figs/ttds-mdnweights-{model_type}.png', dpi=150, bbox_inches="tight")
 
-# %%
-mdn_w_set = []
-model_type = 'MDN$_{Q,\\text{LSTM}}$'
-# MDN weights
-for i,model_label in enumerate(model_labels):
-    if not model_label.startswith(model_type): continue
+# # %%
+# mdn_w_set = []
+# model_type = 'MDN$_{Q,\\text{LSTM}}$'
+# # MDN weights
+# for i,model_label in enumerate(model_labels):
+#     if not model_label.startswith(model_type): continue
 
-    if model_label == '$\\Gamma_\\text{dynamic}$':
-        df = df_set[i]
-        flow_dl, transport_data = flow_dl_set[i], transport_data_set[i]
-        J, Q, ET, C_J, C_Q_J, time = transport_data
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-    else:
-        configs, df = configs_set[i], df_set[i]
-        flow_dl, transport_data = flow_dl_set[i], transport_data_set[i]
-        J, Q, ET, C_J, C_Q_J, time = transport_data
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-        dt = configs['transport_configs']['transport_specs']['dt']
-        test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
+#     if model_label == '$\\Gamma_\\text{dynamic}$':
+#         df = df_set[i]
+#         flow_dl, transport_data = flow_dl_set[i], transport_data_set[i]
+#         J, Q, ET, C_J, C_Q_J, time = transport_data
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#     else:
+#         configs, df = configs_set[i], df_set[i]
+#         flow_dl, transport_data = flow_dl_set[i], transport_data_set[i]
+#         J, Q, ET, C_J, C_Q_J, time = transport_data
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#         dt = configs['transport_configs']['transport_specs']['dt']
+#         test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
     
-    model = model_set[i]
-    mdn_w = model.get_mdn_weights(Q=Q, dl=flow_dl)
+#     model = model_set[i]
+#     mdn_w = model.get_mdn_weights(Q=Q, dl=flow_dl)
 
-    test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
-    df_plot = df[test_s:test_e]
-    mdn_w = mdn_w[test_s_ind:test_e_ind+1]
-    mdn_w_set.append(mdn_w)
+#     test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
+#     df_plot = df[test_s:test_e]
+#     mdn_w = mdn_w[test_s_ind:test_e_ind+1]
+#     mdn_w_set.append(mdn_w)
 
-plot_mdn_weights_ensemble(
-    Q=df_plot.Q.values, mdn_w_set=mdn_w_set, timesteps=df_plot.index,
-    mdn_dists=distributions, figsize=(7,6), label=model_type,
-);
-plt.savefig(f'./figs/ttds-mdnweights-{model_type}.png', dpi=150, bbox_inches="tight")
+# plot_mdn_weights_ensemble(
+#     Q=df_plot.Q.values, mdn_w_set=mdn_w_set, timesteps=df_plot.index,
+#     mdn_dists=distributions, figsize=(7,6), label=model_type,
+# );
+# plt.savefig(f'./figs/ttds-mdnweights-{model_type}.png', dpi=150, bbox_inches="tight")
 
-# %% [markdown]
-# # $P_Q$ - $S_T$ and $\bar{Q_T}$ - $\bar{S_T}$
+# # %% [markdown]
+# # # $P_Q$ - $S_T$ and $\bar{Q_T}$ - $\bar{S_T}$
 
-# %%
-sT_set, pQ_set = [], []
-model_type = 'MDN$_{\\text{LSTM}}$'
-for i,model_label in enumerate(model_labels):
-    if not model_label.startswith(model_type): continue
-    if model_label == '$\\Gamma_\\text{dynamic}$':
-        df = df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-    else:
-        configs, df = configs_set[i], df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-        test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
-        dt = configs['transport_configs']['transport_specs']['dt']
+# # %%
+# sT_set, pQ_set = [], []
+# model_type = 'MDN$_{\\text{LSTM}}$'
+# for i,model_label in enumerate(model_labels):
+#     if not model_label.startswith(model_type): continue
+#     if model_label == '$\\Gamma_\\text{dynamic}$':
+#         df = df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#     else:
+#         configs, df = configs_set[i], df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#         test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
+#         dt = configs['transport_configs']['transport_specs']['dt']
 
-    test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
-    df_plot = df[test_s:test_e]
-    sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
+#     test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
+#     df_plot = df[test_s:test_e]
+#     sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
 
-    sT_set.append(sT_plot)
-    pQ_set.append(pQ_plot)
+#     sT_set.append(sT_plot)
+#     pQ_set.append(pQ_plot)
 
-plot_PQ_ST_ensemble(Q=df_plot.Q.values, pQ_set=pQ_set, sT_set=sT_set, timesteps=df_plot.index, dt=dt, suptitle=model_type)
-plt.savefig(f'./figs/PQ-ST-{model_type}.png', dpi=150, bbox_inches="tight")
-
-
-# %%
-sT_set, pQ_set = [], []
-model_type = 'MDN$_{Q}$'
-for i,model_label in enumerate(model_labels):
-    if not model_label.startswith(model_type): continue
-    if model_label == '$\\Gamma_\\text{dynamic}$':
-        df = df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-    else:
-        configs, df = configs_set[i], df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-        test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
-        dt = configs['transport_configs']['transport_specs']['dt']
-
-    test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
-    df_plot = df[test_s:test_e]
-    sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
-
-    sT_set.append(sT_plot)
-    pQ_set.append(pQ_plot)
-
-plot_PQ_ST_ensemble(Q=df_plot.Q.values, pQ_set=pQ_set, sT_set=sT_set, timesteps=df_plot.index, dt=dt, suptitle=model_type)
-plt.savefig(f'./figs/PQ-ST-{model_type}.png', dpi=150, bbox_inches="tight")
+# plot_PQ_ST_ensemble(Q=df_plot.Q.values, pQ_set=pQ_set, sT_set=sT_set, timesteps=df_plot.index, dt=dt, suptitle=model_type)
+# plt.savefig(f'./figs/PQ-ST-{model_type}.png', dpi=150, bbox_inches="tight")
 
 
-# %%
-sT_set, pQ_set = [], []
-model_type = 'MDN$_{Q,\\text{LSTM}}$'
-for i,model_label in enumerate(model_labels):
-    if not model_label.startswith(model_type): continue
-    if model_label == '$\\Gamma_\\text{dynamic}$':
-        df = df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-    else:
-        configs, df = configs_set[i], df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-        test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
-        dt = configs['transport_configs']['transport_specs']['dt']
+# # %%
+# sT_set, pQ_set = [], []
+# model_type = 'MDN$_{Q}$'
+# for i,model_label in enumerate(model_labels):
+#     if not model_label.startswith(model_type): continue
+#     if model_label == '$\\Gamma_\\text{dynamic}$':
+#         df = df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#     else:
+#         configs, df = configs_set[i], df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#         test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
+#         dt = configs['transport_configs']['transport_specs']['dt']
 
-    test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
-    df_plot = df[test_s:test_e]
-    sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
+#     test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
+#     df_plot = df[test_s:test_e]
+#     sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
 
-    sT_set.append(sT_plot)
-    pQ_set.append(pQ_plot)
+#     sT_set.append(sT_plot)
+#     pQ_set.append(pQ_plot)
 
-plot_PQ_ST_ensemble(Q=df_plot.Q.values, pQ_set=pQ_set, sT_set=sT_set, timesteps=df_plot.index, dt=dt, suptitle=model_type)
-plt.savefig(f'./figs/PQ-ST-{model_type}.png', dpi=150, bbox_inches="tight")
-
-
-# %% [markdown]
-# # Young water fraction
-
-# %%
-sT_set, pQ_set = [], []
-model_type = 'MDN$_{\\text{LSTM}}$'
-for i,model_label in enumerate(model_labels):
-    if not model_label.startswith(model_type): continue
-    if model_label == '$\\Gamma_\\text{dynamic}$':
-        df = df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-    else:
-        configs, df = configs_set[i], df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-        test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
-        dt = configs['transport_configs']['transport_specs']['dt']
-
-    test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
-    df_plot = df[test_s:test_e]
-    sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
-    sT_set.append(sT_plot)
-    pQ_set.append(pQ_plot)
-
-plot_young_water_withQ_ensemble(
-    Q=df_plot.Q.values, pQ_set=pQ_set, timesteps=df_plot.index,
-    dt=dt, cutoff_ages=[100], label=model_type, figsize=(7, 6), plot_sel_time_style='sd'
-);
-plt.savefig(f'./figs/youngwater-{model_type}.png', dpi=150, bbox_inches="tight")
+# plot_PQ_ST_ensemble(Q=df_plot.Q.values, pQ_set=pQ_set, sT_set=sT_set, timesteps=df_plot.index, dt=dt, suptitle=model_type)
+# plt.savefig(f'./figs/PQ-ST-{model_type}.png', dpi=150, bbox_inches="tight")
 
 
-# %%
-sT_set, pQ_set = [], []
-model_type = 'MDN$_{Q}$'
-for i,model_label in enumerate(model_labels):
-    if not model_label.startswith(model_type): continue
-    if model_label == '$\\Gamma_\\text{dynamic}$':
-        df = df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-    else:
-        configs, df = configs_set[i], df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-        test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
-        dt = configs['transport_configs']['transport_specs']['dt']
+# # %%
+# sT_set, pQ_set = [], []
+# model_type = 'MDN$_{Q,\\text{LSTM}}$'
+# for i,model_label in enumerate(model_labels):
+#     if not model_label.startswith(model_type): continue
+#     if model_label == '$\\Gamma_\\text{dynamic}$':
+#         df = df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#     else:
+#         configs, df = configs_set[i], df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#         test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
+#         dt = configs['transport_configs']['transport_specs']['dt']
 
-    test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
-    df_plot = df[test_s:test_e]
-    sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
-    sT_set.append(sT_plot)
-    pQ_set.append(pQ_plot)
+#     test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
+#     df_plot = df[test_s:test_e]
+#     sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
 
-plot_young_water_withQ_ensemble(
-    Q=df_plot.Q.values, pQ_set=pQ_set, timesteps=df_plot.index,
-    dt=dt, cutoff_ages=[100], label=model_type, figsize=(7, 6), plot_sel_time_style='sd'
-);
-plt.savefig(f'./figs/youngwater-{model_type}.png', dpi=150, bbox_inches="tight")
+#     sT_set.append(sT_plot)
+#     pQ_set.append(pQ_plot)
+
+# plot_PQ_ST_ensemble(Q=df_plot.Q.values, pQ_set=pQ_set, sT_set=sT_set, timesteps=df_plot.index, dt=dt, suptitle=model_type)
+# plt.savefig(f'./figs/PQ-ST-{model_type}.png', dpi=150, bbox_inches="tight")
 
 
-# %%
-sT_set, pQ_set = [], []
-model_type = 'MDN$_{Q,\\text{LSTM}}$'
-for i,model_label in enumerate(model_labels):
-    if not model_label.startswith(model_type): continue
-    if model_label == '$\\Gamma_\\text{dynamic}$':
-        df = df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-    else:
-        configs, df = configs_set[i], df_set[i]
-        sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
-        test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
-        dt = configs['transport_configs']['transport_specs']['dt']
+# # %% [markdown]
+# # # Young water fraction
 
-    test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
-    df_plot = df[test_s:test_e]
-    sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
-    sT_set.append(sT_plot)
-    pQ_set.append(pQ_plot)
+# # %%
+# sT_set, pQ_set = [], []
+# model_type = 'MDN$_{\\text{LSTM}}$'
+# for i,model_label in enumerate(model_labels):
+#     if not model_label.startswith(model_type): continue
+#     if model_label == '$\\Gamma_\\text{dynamic}$':
+#         df = df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#     else:
+#         configs, df = configs_set[i], df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#         test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
+#         dt = configs['transport_configs']['transport_specs']['dt']
 
-plot_young_water_withQ_ensemble(
-    Q=df_plot.Q.values, pQ_set=pQ_set, timesteps=df_plot.index,
-    dt=dt, cutoff_ages=[100], label=model_type, figsize=(7, 6), plot_sel_time_style='sd'
-);
-plt.savefig(f'./figs/youngwater-{model_type}.png', dpi=150, bbox_inches="tight")
+#     test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
+#     df_plot = df[test_s:test_e]
+#     sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
+#     sT_set.append(sT_plot)
+#     pQ_set.append(pQ_plot)
+
+# plot_young_water_withQ_ensemble(
+#     Q=df_plot.Q.values, pQ_set=pQ_set, timesteps=df_plot.index,
+#     dt=dt, cutoff_ages=[100], label=model_type, figsize=(7, 6), plot_sel_time_style='sd'
+# );
+# plt.savefig(f'./figs/youngwater-{model_type}.png', dpi=150, bbox_inches="tight")
+
+
+# # %%
+# sT_set, pQ_set = [], []
+# model_type = 'MDN$_{Q}$'
+# for i,model_label in enumerate(model_labels):
+#     if not model_label.startswith(model_type): continue
+#     if model_label == '$\\Gamma_\\text{dynamic}$':
+#         df = df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#     else:
+#         configs, df = configs_set[i], df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#         test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
+#         dt = configs['transport_configs']['transport_specs']['dt']
+
+#     test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
+#     df_plot = df[test_s:test_e]
+#     sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
+#     sT_set.append(sT_plot)
+#     pQ_set.append(pQ_plot)
+
+# plot_young_water_withQ_ensemble(
+#     Q=df_plot.Q.values, pQ_set=pQ_set, timesteps=df_plot.index,
+#     dt=dt, cutoff_ages=[100], label=model_type, figsize=(7, 6), plot_sel_time_style='sd'
+# );
+# plt.savefig(f'./figs/youngwater-{model_type}.png', dpi=150, bbox_inches="tight")
+
+
+# # %%
+# sT_set, pQ_set = [], []
+# model_type = 'MDN$_{Q,\\text{LSTM}}$'
+# for i,model_label in enumerate(model_labels):
+#     if not model_label.startswith(model_type): continue
+#     if model_label == '$\\Gamma_\\text{dynamic}$':
+#         df = df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#     else:
+#         configs, df = configs_set[i], df_set[i]
+#         sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[i]
+#         test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
+#         dt = configs['transport_configs']['transport_specs']['dt']
+
+#     test_s_ind, test_e_ind = df.index.get_loc(test_s), df.index.get_loc(test_e)
+#     df_plot = df[test_s:test_e]
+#     sT_plot, pQ_plot = sT[:,test_s_ind:,...], pQETs[:,test_s_ind:,0]
+#     sT_set.append(sT_plot)
+#     pQ_set.append(pQ_plot)
+
+# plot_young_water_withQ_ensemble(
+#     Q=df_plot.Q.values, pQ_set=pQ_set, timesteps=df_plot.index,
+#     dt=dt, cutoff_ages=[100], label=model_type, figsize=(7, 6), plot_sel_time_style='sd'
+# );
+# plt.savefig(f'./figs/youngwater-{model_type}.png', dpi=150, bbox_inches="tight")

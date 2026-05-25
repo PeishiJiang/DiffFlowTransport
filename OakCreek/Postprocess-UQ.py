@@ -25,6 +25,7 @@ from DiffFlowTransport.utils.plot import plot_timeseries_obs_1to1, plot_PQET_qua
 # from DiffFlowTransport.utils.plot import plot_flow_transport_assessment2,plot_PQET_ST_esspi_ensemble
 from DiffFlowTransport.utils.plot import plot_PQ_ST_ensemble, plot_PQ_ensemble
 from DiffFlowTransport.utils.plot import plot_young_water_withQ_ensemble, plot_mdn_weights_ensemble
+from DiffFlowTransport.utils.plot import plot_ttd_comparison_best, plot_PQ_ST_comparison_best, plot_ttd_and_PQST_4col
 from DiffFlowTransport.utils import compute_metrics
 from DiffFlowTransport.model import load_model
 
@@ -394,6 +395,7 @@ plt.savefig('./figs/performances2.png', dpi=150, bbox_inches="tight")
 # %%
 # Plot the histogram ...
 train_or_test, metrics = "test", ['kge', 'alpha', 'beta', 'cc']
+# metrics_labels = ['$KGE$', '$\alpha$', '$KGE$', '$CC$']
 varns = ["C_Q", "C_{Qb}"]
 varn_labels = ["$C_Q$", "$C_{Q}$ (op)"]
 fig, axes = plt.subplots(1, len(metrics), figsize=(16, 4))
@@ -909,3 +911,265 @@ plt.savefig(f'./figs/youngwater-{model_type}.png', dpi=150, bbox_inches="tight")
 
 # %% [markdown]
 # # Intercomparison between Gamma and MDN
+# ## Step 1 — identify the best member index per MDN configuration
+ 
+# %%
+MDN_TYPES   = [
+    r'MDN$_{\text{LSTM}}$',
+    r'MDN$_{Q}$',
+    r'MDN$_{Q,\text{LSTM}}$',
+]
+GAMMA_LABEL = r'$\Gamma_\text{dynamic}$'
+ 
+best_indices = {}   # mtype → int index into model_labels / *_set lists
+ 
+for mtype in MDN_TYPES:
+    sub = df_metrics[
+        (df_metrics['model-type'] == mtype) &
+        (df_metrics['varn'] == 'C_Q') &
+        (df_metrics['train_or_test'] == 'test')
+    ]
+    best_label = sub.iloc[sub['mse'].argmin()]['model']
+    best_indices[mtype] = model_labels.index(best_label)
+    print(f"{mtype:35s}  →  {best_label}  (test MSE = {sub['mse'].min():.5f})")
+ 
+best_indices[GAMMA_LABEL] = model_labels.index(GAMMA_LABEL)
+print(f"{GAMMA_LABEL:35s}  →  {GAMMA_LABEL}")
+ 
+# %% [markdown]
+# ## Step 2 — trim unused ensemble members to free memory
+ 
+# %%
+keep_idx = set(best_indices.values())
+drop_idx = sorted(
+    [i for i in range(len(model_labels)) if i not in keep_idx],
+    reverse=True,
+)
+print(f"Keeping {len(keep_idx)} models, dropping {len(drop_idx)} ensemble members.")
+ 
+for i in drop_idx:
+    del transport_output_set[i]
+    del transport_output_set_noQ[i]
+    del flow_output_set[i]
+    del df_set[i]
+    del model_set[i]
+    del loss_set[i]
+    del flow_dl_set[i]
+    del transport_data_set[i]
+    del configs_set[i]
+    del model_labels[i]
+    del model_names[i]
+ 
+print("Remaining models after trimming:")
+for i, ml in enumerate(model_labels):
+    print(f"  [{i}] {ml}")
+ 
+import gc; gc.collect()
+ 
+# %% [markdown]
+# ## Step 3 — build gamma_fallback_configs
+#
+# Γ_dynamic was never assigned a configs_set entry (it is None at its position).
+# Pass the configs of any MDN model so the helper functions can read test dates.
+ 
+# %%
+gamma_pos = model_labels.index(GAMMA_LABEL)
+ 
+# Insert None placeholder if missing (keeps list aligned with model_labels)
+if len(configs_set) < len(model_labels):
+    configs_set.insert(gamma_pos, None)
+elif configs_set[gamma_pos] is not None:
+    configs_set[gamma_pos] = None
+ 
+# Fallback: first non-None config for date slicing inside the plot functions
+gamma_fallback_configs = next(c for c in configs_set if c is not None)
+ 
+# dt from any MDN config (all use the same transport time step)
+dt = gamma_fallback_configs['transport_configs']['transport_specs']['dt']
+ 
+# %% [markdown]
+# ## Step 4 — generate comparison figures
+ 
+# %%
+# Figure A — p_Q vs T, one row per model type
+fig_A, _ = plot_ttd_comparison_best(
+    df_metrics=df_metrics,
+    model_labels=model_labels,
+    transport_output_set=transport_output_set,
+    df_set=df_set,
+    configs_set=configs_set,
+    mdn_model_types=MDN_TYPES,
+    gamma_label=GAMMA_LABEL,
+    gamma_fallback_configs=gamma_fallback_configs,
+    dt=dt,
+    last_age_cut=None,
+    figsize=(14, 3),
+    suptitle=''
+    # suptitle='TTD comparison — best MDN members vs $\\Gamma_\\text{dynamic}$  (Oak Creek, test period)',
+)
+plt.savefig('./figs/ttd-comparison-best.png', dpi=150, bbox_inches='tight')
+ 
+# %%
+# Figure B — P_Q–S_T and Q̄_T–S̄_T, one row per model type
+fig_B, _ = plot_PQ_ST_comparison_best(
+    df_metrics=df_metrics,
+    model_labels=model_labels,
+    transport_output_set=transport_output_set,
+    df_set=df_set,
+    configs_set=configs_set,
+    mdn_model_types=MDN_TYPES,
+    gamma_label=GAMMA_LABEL,
+    gamma_fallback_configs=gamma_fallback_configs,
+    dt=dt,
+    last_age_cut=None,
+    figsize=(14, 5),
+    suptitle=''
+    # suptitle=(r"$P_Q$–$S_T$ and $\bar{Q}_T$–$\bar{S}_T$: "
+    #           r"best members vs $\Gamma_\text{dynamic}$ (Oak Creek, test period)"),
+)
+plt.savefig('./figs/PQ-ST-comparison-best.png', dpi=150, bbox_inches='tight')
+ 
+# %%
+# Figure C — 4-column manuscript composite (recommended for revised Fig. 10)
+fig_C = plot_ttd_and_PQST_4col(
+    df_metrics=df_metrics,
+    model_labels=model_labels,
+    transport_output_set=transport_output_set,
+    df_set=df_set,
+    configs_set=configs_set,
+    mdn_model_types=MDN_TYPES,
+    gamma_label=GAMMA_LABEL,
+    gamma_fallback_configs=gamma_fallback_configs,
+    dt=dt,
+    last_age_cut=None,
+    figsize=(16, 10),
+    suptitle=''
+    # suptitle='SAS model comparison — Oak Creek (test period)',
+)
+plt.savefig('./figs/ttd-PQST-4col-best.png', dpi=150, bbox_inches='tight')
+
+
+# # ## Step 1 — identify the best member index per MDN configuration
+ 
+# # %%
+# # model_types as they appear in model_labels / df_metrics
+# MDN_TYPES = [
+#     r'MDN$_{\text{LSTM}}$',
+#     r'MDN$_{Q}$',
+#     r'MDN$_{Q,\text{LSTM}}$',
+# ]
+# GAMMA_LABEL = r'$\Gamma_\text{dynamic}$'
+ 
+# # For each MDN type, pick the ensemble member with the lowest test-MSE on C_Q
+# best_labels = {}   # mtype → model-label string
+# best_indices = {}  # mtype → integer index into model_labels / *_set lists
+ 
+# for mtype in MDN_TYPES:
+#     sub = df_metrics[
+#         (df_metrics['model-type'] == mtype) &
+#         (df_metrics['varn'] == 'C_Q') &
+#         (df_metrics['train_or_test'] == 'test')
+#     ]
+#     best_label = sub.iloc[sub['mse'].argmin()]['model']
+#     best_labels[mtype]  = best_label
+#     best_indices[mtype] = model_labels.index(best_label)
+#     print(f"{mtype:35s}  →  {best_label}  (test MSE = {sub['mse'].min():.5f})")
+ 
+# # Γ_dynamic is always the last entry appended by the existing code
+# best_indices[GAMMA_LABEL] = model_labels.index(GAMMA_LABEL)
+# print(f"{GAMMA_LABEL:35s}  →  {GAMMA_LABEL}")
+ 
+# # %% [markdown]
+# # ## Step 2 — trim unused ensemble members to free memory
+ 
+# # %%
+# # Build the keep-set: best member of each MDN type + Γ_dynamic
+# keep_idx = set(best_indices.values())
+ 
+# # Identify indices to remove
+# drop_idx = [i for i in range(len(model_labels)) if i not in keep_idx]
+# print(f"Keeping {len(keep_idx)} models, dropping {len(drop_idx)} ensemble members.")
+ 
+# # Delete the large transport arrays for unused members (in reverse order so
+# # indices stay valid during deletion)
+# for i in sorted(drop_idx, reverse=True):
+#     del transport_output_set[i]
+#     del transport_output_set_noQ[i]
+#     del flow_output_set[i]
+#     del df_set[i]
+#     del model_set[i]
+#     del loss_set[i]
+#     del flow_dl_set[i]
+#     del transport_data_set[i]
+#     del configs_set[i]
+#     del model_labels[i]
+#     del model_names[i]
+ 
+# # configs_set entry for Γ_dynamic was never added (it is None by convention
+# # in the new plot functions).  Ensure the list is the right length:
+# # if a None placeholder is missing at the Γ_dynamic position, add it.
+# gamma_pos = model_labels.index(GAMMA_LABEL)
+# if len(configs_set) < len(model_labels):
+#     configs_set.insert(gamma_pos, None)
+# elif configs_set[gamma_pos] is not None:
+#     # already present and set to a real config — replace with None so the
+#     # plot helpers know to fall back to a MDN config for date slicing
+#     configs_set[gamma_pos] = None
+ 
+# print("After trimming:")
+# for i, ml in enumerate(model_labels):
+#     print(f"  [{i}] {ml}")
+ 
+# # %%
+# import gc
+# gc.collect()
+ 
+# # %% [markdown]
+# # ## Step 3 — generate comparison figures
+ 
+# # All four model types in display order (Γ first so it underlies the MDN lines)
+# ALL_MODEL_TYPES = [GAMMA_LABEL] + MDN_TYPES
+ 
+# # %%
+# # Figure A — TTD comparison (p_Q vs age T, three flow-class panels)
+# fig_A, axes_A = plot_ttd_comparison_best(
+#     df_metrics=df_metrics,
+#     model_labels=model_labels,
+#     transport_output_set=transport_output_set,
+#     df_set=df_set,
+#     configs_set=configs_set,
+#     model_types=ALL_MODEL_TYPES,
+#     figsize=(13, 4.5),
+#     suptitle=r"TTD comparison — SAS model comparison (Oak Creek)",
+# )
+# plt.savefig('./figs/ttd-comparison-best.png', dpi=150, bbox_inches="tight")
+ 
+# # %%
+# # Figure B — P_Q–S_T and Q̄_T–S̄_T (compact two-panel)
+# fig_B, axes_B = plot_PQ_ST_comparison_best(
+#     df_metrics=df_metrics,
+#     model_labels=model_labels,
+#     transport_output_set=transport_output_set,
+#     df_set=df_set,
+#     configs_set=configs_set,
+#     model_types=ALL_MODEL_TYPES,
+#     figsize=(12, 5),
+#     suptitle=r"$P_Q$–$S_T$ and $\bar{Q}_T$–$\bar{S}_T$: SAS model comparison "
+#              r"(Oak Creek)",
+# )
+# plt.savefig('./figs/PQ-ST-comparison-best.png', dpi=150, bbox_inches="tight")
+ 
+# # %%
+# # Figure C — 4-column manuscript composite (recommended for revised Fig. 10)
+# fig_C = plot_ttd_and_PQST_4col(
+#     df_metrics=df_metrics,
+#     model_labels=model_labels,
+#     transport_output_set=transport_output_set,
+#     df_set=df_set,
+#     configs_set=configs_set,
+#     model_types=ALL_MODEL_TYPES,
+#     last_age_cut=2000,
+#     figsize=(15, 13),
+#     suptitle="SAS model comparison — Oak Creek (test period)",
+# )
+# plt.savefig('./figs/ttd-PQST-4col-best.png', dpi=150, bbox_inches="tight")

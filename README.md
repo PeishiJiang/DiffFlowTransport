@@ -57,50 +57,32 @@ TBD
 
 ## Examples
 
-### The Lower Hafren Watershed (Plynlimon, UK)
-TBD
-
-### The Oak Creek Watershed (WA, USA)
-TBD
-<!-- <p align="center">
-<img src="./doc/HybridBB-v2.png" alt="fishy" class="center" width="600px">
-</p> -->
-
-<!-- We demonstrated JAX-CanVeg's hybrid modeling capability by applying the model to simulate the water and carbon fluxes at four flux tower sites in the western United States with varying aridity. To this end, we developed a hybrid version of the Ball-Berry equation that emulates the impact of water stress on stomatal closure (Jiang et al., 2024). The scripts for reproducing the results of the paper are available in the folder `examples`. We applied the differentiable JAX-CanVeg at four flux tower sites to evaluate the performance of a hybrid version of the Ball-Berry equation. The model were trained against both observed latent heat fluxes and net ecosystem exchange. Below we illustrate the application example on [US-Whs](./examples/US-Whs) (which is applicable to the other three flux tower sites, i.e., [US-Me2](./examples/US-Me2), [US-Bi1](./examples/US-Bi1), and [US-Hn1](./examples/US-Hn1)).
-
-
-- **Step 1:** Train the process-based and hybrid JAX-CanVeg and the pure neural networks:
+- **Step 1:** Train the LSTM-based flow model and the ensemble SAS models:
 ```sh
-python [jax-canveg-folder]/examples/US-Whs/train_models.py
-python [jax-canveg-folder]/examples/US-Whs/train_dnns.py
+bash [diffsas]/OakCreek/job.sh
 ```
 
 > [!NOTE]
-> Training multiple JAX-CanVeg models will take a pretty long time. It is suggested to train it in an HPC system. We provide an example of sbatch job script [here](./examples/nersc_job.sh).
+> Training multiple SAS models will take a pretty long time. It is suggested to train it in an HPC system. The shell scripts basically call [train-model-mdn2-v3.py](./OakCreek/train-model-mdn2-v3.py) for each SAS model training.
 
-- **Step 2:** Evaluate the simulation performance of the trained models including both JAX-CanVeg and DNNs:
+- **Step 2:** Predict the streamflow and solute dynamics using the trained models:
 ```sh
-cd [jax-canveg-folder]/examples/US-Whs
-python postprocessing.py
+cd [diffsas]/OakCreek
+python Postprocess-calibrated-runs.py.py
 ```
 
-- **Step 3:** Calculate the parameter sensitivity of selected models:
+- **Step 3:** Postprocess the trained SAS models via python scripts:
 ```sh
-cd [jax-canveg-folder]/examples/US-Whs
-python calculate_sensitivity.py
+cd [diffsas]/OakCreek
+python Postprocess-UQ.py
 ```
 
-> [!NOTE]
-> This step requires the completion of model training at all four sites. One can modify the code to calculate the sensitivity at specified sites.
+- **[Optional] Step 4:** Postprocess the trained SAS models by using [Postprocess-UQ.ipynb](./OakCreek/Postprocess-UQ.ipynb) and [Postprocess_mdn.ipynb](./OakCreek/Postprocess_mdn.ipynb)
 
-- **Step 4:** Visualize the training results using [TrainingAnalysis.ipynb](./examples/TrainingAnalysis.ipynb)
+<!-- ### The Lower Hafren Watershed (Plynlimon, UK) -->
 
-- **Step 5:** Visualize the sensitivity analysis results using [SensitivityAnalysis.ipynb](./examples/SensitivityAnalysis.ipynb)
 
-Some simulations of the trained JAX-CanVeg --
-<p align="center">
-<img src="./doc/Simulation-US-Whs-ML-0.5.png" alt="fishy" class="center" width="800px">
-</p> -->
+<!-- ### The Oak Creek Watershed (WA, USA) -->
 
 
 ## Acknowledgements

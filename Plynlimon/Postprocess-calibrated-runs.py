@@ -75,8 +75,8 @@ model_names = [
 #     r'MDN$_\text{LSTM}$-rain'
 # ]
 
-saved_folder = Path("./models-rev3")
-# saved_folder = Path("./models-rev2")
+# saved_folder = Path("./models-rev3")
+saved_folder = Path("./models-rev2")
 
 f_configs_set = [f'configs-{model}.json' for model in model_names]
 f_sim_set = [f'sim-{model}.pkl' for model in model_names]

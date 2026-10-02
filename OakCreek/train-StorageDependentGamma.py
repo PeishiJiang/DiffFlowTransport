@@ -5,9 +5,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 
+import jax
 import jax.numpy as jnp
 from DiffFlowTransport.transport import SASTransport
-from DiffFlowTransport.sas import SAS_Gamma, SAS_Uniform, SAS_Gamma_StorageDependent
+from DiffFlowTransport.sas import SAS_Uniform, SAS_Gamma_StorageDependent
 from DiffFlowTransport.utils import get_transport_obs_fluxes
 
 
@@ -20,17 +21,6 @@ max_iter = 500
 df = pd.read_csv('data_withDiffusion_withSpinup-correctedZeroFlow.csv', index_col=0)
 df.index = pd.to_datetime(df.index)
 df.head()
-
-# %% [markdown]
-# # Calculate the storage change
-
-# %%
-df['dS'] = df['P'] - df['ET'] - df['Q']
-fig, axes = plt.subplots(df.shape[1], sharex=True, figsize=(10,12))
-for i, ax in enumerate(axes):
-    ax.plot(df.iloc[:,i], '.')
-    ax.set(title=df.columns[i])
-
 
 # %% [markdown]
 # # Initialize the model and test run
@@ -55,40 +45,34 @@ df_cut = df.iloc[cutoff_length:]
 
 # Other arguments for running the model
 nt = df_cut.shape[0]
-sTmT_init = jnp.zeros([nt, 2])
-
 
 # %%
-J, Q, ET, C_J, C_Q_J, dS, time = get_transport_obs_fluxes(df_cut, 'Oakcreek', return_dS=True)
-
+J, Q, ET, C_J, C_Q_J, time = get_transport_obs_fluxes(df_cut, 'Oakcreek')
 
 # %% [markdown]
-# ## SAS functions
+# ## Relative storage
 
 # %%
-# SAS functions
-# sas_Q = SAS_Gamma_StorageDependent(a=0.69, λ=-103., ΔScλ=-103.*48)
-sas_Q = SAS_Gamma_StorageDependent(a=0.69, λ=-103., ΔScλ=-103.*48)
-sas_ET = SAS_Uniform(scale=400.)
+# Relative storage ΔS: cumulative J - ET - Q (J = P2, rain + snowmelt), demeaned and
+# linearly detrended to remove the drift from water-balance non-closure.
+DS_MODE = "detrended_cumulative"
+dS_cum = np.cumsum(np.asarray(J - ET - Q))
+t_ind = np.arange(dS_cum.size)
+dS = jnp.asarray(dS_cum - np.polyval(np.polyfit(t_ind, dS_cum, 1), t_ind))
 
-# SAS arguments
-sas_Q_args = dS
-sas_ET_args = ET
-
-# Initialize the SAS transport model
-sas_transport = SASTransport(sas_Q, sas_ET, **params)
-
+# Initial age-ranked storage and tracer mass (cold start: all zeros).
+sTmT_init = jnp.zeros([nt, 2])
 
 # %% [markdown]
 # ## Test run
 
 # %%
-sT, mT, mQETs, pQETs, mRs, C_Q = sas_transport(
-    J, C_J, Q, ET, sTmT_init, sas_Q_args, sas_ET_args
-)
+# Reference SAS functions to check that the model runs end to end before calibration.
+sas_Q = SAS_Gamma_StorageDependent(a=0.69, λ=-103., ΔScλ=-103.*48)
+sas_ET = SAS_Uniform(scale=400.)
+sas_transport = SASTransport(sas_Q, sas_ET, **params)
+sT, mT, mQETs, pQETs, mRs, C_Q = sas_transport(J, C_J, Q, ET, sTmT_init, dS, ET)
 
-
-# %%
 plt.plot(C_Q_J, '.')
 plt.plot(C_Q, '.')
 
@@ -103,8 +87,6 @@ train_end_ind = df_cut.index.get_loc(train_end)
 test_start_ind = df_cut.index.get_loc(test_start)
 test_end_ind = df_cut.index.get_loc(test_end)
 
-
-# %%
 mask = jnp.where(~jnp.isnan(C_Q_J))
 mask_train = mask[0][(mask[0]>train_start_ind) & (mask[0]<train_end_ind)]
 mask_test = mask[0][(mask[0]>test_start_ind) & (mask[0]<test_end_ind)]
@@ -113,132 +95,89 @@ mask_test = mask[0][(mask[0]>test_start_ind) & (mask[0]<test_end_ind)]
 def nse(obs, sim):
     obs = np.asarray(obs, dtype=float)
     sim = np.asarray(sim, dtype=float)
-
-    # mask = np.isfinite(obs) & np.isfinite(sim)
-    # obs = obs[mask]
-    # sim = sim[mask]
-
     denom = np.sum((obs - np.mean(obs))**2)
     if denom == 0:
         return np.nan  # undefined if obs has zero variance
-
     return 1 - np.sum((sim - obs)**2) / denom
 
 
-# Define a function to run the model
+def mse(obs, sim):
+    return jnp.mean((obs - sim) ** 2)
+
+
+# Run the transport model for parameters x = (a, λ, ΔScλ, ET scale); jit-compiled so
+# the transport solver is traced once and reused across all objective evaluations.
+@jax.jit
 def run_model(x):
-    # Get the parameters
-    a = x[0]
-    λ = x[1]
-    ΔScλ = x[2]
-    scale = x[3]
-
-    # Initialize the SAS functions
-    sas_Q = SAS_Gamma_StorageDependent(a=a, λ=λ, ΔScλ=ΔScλ)
-    sas_ET = SAS_Uniform(scale=scale)
-
-    # SAS arguments
-    sas_Q_args = dS
-    sas_ET_args = ET
-
-    # Initialize the SAS transport model
+    sas_Q = SAS_Gamma_StorageDependent(a=x[0], λ=x[1], ΔScλ=x[2])
+    sas_ET = SAS_Uniform(scale=x[3])
     sas_transport = SASTransport(sas_Q, sas_ET, **params)
+    sT, mT, mQETs, pQETs, mRs, C_Q = sas_transport(J, C_J, Q, ET, sTmT_init, dS, ET)
+    return C_Q.flatten()
 
-    # Run the SAS model
-    sT, mT, mQETs, pQETs, mRs, C_Q = sas_transport(
-        J, C_J, Q, ET, sTmT_init, sas_Q_args, sas_ET_args
-    )
 
-    return C_Q
-
-# Define an objective function
+# Training-period objectives
 def obj_nse(x):
-    # Run the model
-    C_Q = run_model(x)
-    C_Q = C_Q.flatten()
+    return -nse(C_Q_J[mask_train], run_model(x)[mask_train])
 
-    # Calculate the loss
-    # loss = jnp.mean((C_Q_J[mask_train] - C_Q[mask_train]) ** 2)
-    loss = -nse(C_Q_J[mask_train], C_Q[mask_train])
-
-    return loss
 
 def obj_mse(x):
-    # Run the model
-    C_Q = run_model(x)
-    C_Q = C_Q.flatten()
+    return mse(C_Q_J[mask_train], run_model(x)[mask_train])
 
-    # Calculate the loss
-    loss = jnp.mean((C_Q_J[mask_train] - C_Q[mask_train]) ** 2)
 
-    return loss
-
-def cb(xk):
-    # Run the model
+def callback(xk):
     C_Q = run_model(xk)
-    C_Q = C_Q.flatten()
-
-    # Calculate the loss
-    mse_train = jnp.mean((C_Q_J[mask_train] - C_Q[mask_train]) ** 2)
-    nse_train = nse(C_Q_J[mask_train], C_Q[mask_train])
-    mse_test = jnp.mean((C_Q_J[mask_test] - C_Q[mask_test]) ** 2)
-    nse_test = nse(C_Q_J[mask_test], C_Q[mask_test])
-
-    print("iter x =", xk, "mse (train) =", mse_train, "mse (test) =", mse_test, "nse (train) =", nse_train, "nse (test) =", nse_test)  # per-iteration log
+    print("iter x =", xk,
+          "mse (train) =", mse(C_Q_J[mask_train], C_Q[mask_train]),
+          "mse (test) =", mse(C_Q_J[mask_test], C_Q[mask_test]),
+          "nse (train) =", nse(C_Q_J[mask_train], C_Q[mask_train]),
+          "nse (test) =", nse(C_Q_J[mask_test], C_Q[mask_test]))
 
 
 # %%
-# Train the model using NSE
-x0 = np.array([0.69, -103., -103.*48, 400.])
-res_nse = minimize(obj_nse, x0, method='nelder-mead', callback=cb,
-               options={'xatol': 1e-8, 'disp': True, "maxiter": max_iter}
-               )
-            #    options={'xatol': 1e-8, 'disp': True, 'maxiter': 100})
-
-# %%
-# Train the model using MSE
-res_mse = minimize(obj_mse, x0, method='nelder-mead', callback=cb,
-               options={'xatol': 1e-8, 'disp': True, "maxiter": max_iter}
-               )
-
-# %%
-# Save the results
-out = {
-    "x": res_nse.x.tolist(),
-    "fun": float(res_nse.fun),
-    "success": bool(res_nse.success),
-    "message": str(res_nse.message),
-    "nit": int(res_nse.nit),
-    "nfev": int(res_nse.nfev),
-}
-with open("./models-withDiffusion-rev/storage-dependent-gamma-nse.json", "w") as f:
-    json.dump(out, f, indent=2)
+# Starting values of λ for the multistart Nelder-Mead calibration.
+LAMBDA0_STARTS = [-0.3, -1.0, -3.0]
 
 
-# Save the results
-out = {
-    "x": res_mse.x.tolist(),
-    "fun": float(res_mse.fun),
-    "success": bool(res_mse.success),
-    "message": str(res_mse.message),
-    "nit": int(res_mse.nit),
-    "nfev": int(res_mse.nfev),
-}
-with open("./models-withDiffusion-rev/storage-dependent-gamma-mse.json", "w") as f:
-    json.dump(out, f, indent=2)
+def multistart_fit(obj_func, label):
+    """Run Nelder-Mead from each starting point in LAMBDA0_STARTS and return the
+    best result (lowest objective) and all candidates."""
+    candidates = []
+    for lam0 in LAMBDA0_STARTS:
+        x0 = np.array([0.69, lam0, lam0 * 50., 400.])
+        print(f"\n=== {label} fit, start λ0={lam0} (x0={x0.tolist()}) ===")
+        res = minimize(obj_func, x0, method='nelder-mead', callback=callback,
+                       options={'xatol': 1e-8, 'disp': True, "maxiter": max_iter})
+        candidates.append((lam0, res))
 
-# %%
-# Run the model using the optimized parameters
-# cb(res.x)
-# C_Q = run_model(res.x)
-# plt.plot(C_Q_J, '.')
-# plt.plot(C_Q, '.')
+    best = min((r for _, r in candidates), key=lambda r: r.fun)
+    print(f"\n=== {label} multi-start summary ===")
+    for lam0, r in candidates:
+        flag = " <- selected" if r is best else ""
+        print(f"  λ0={lam0}: fun={r.fun:.6f} success={r.success} nit={r.nit}{flag}")
+    return best, candidates
+
+
+def save_result(res, candidates, label):
+    out = {
+        "x": res.x.tolist(),
+        "fun": float(res.fun),
+        "success": bool(res.success),
+        "message": str(res.message),
+        "nit": int(res.nit),
+        "nfev": int(res.nfev),
+        "ds_mode": DS_MODE,
+        "multistart_lambda0": [lam0 for lam0, _ in candidates],
+        "multistart_fun": [float(r.fun) for _, r in candidates],
+    }
+    fname = f"./models-withDiffusion-rev2/storage-dependent-gamma-{DS_MODE}-{label}.json"
+    with open(fname, "w") as f:
+        json.dump(out, f, indent=2)
+    print(f"Wrote {fname}")
 
 
 # %%
-
-
-# %%
-
-
-
+# Calibrate the benchmark against the training-period NSE and MSE.
+for label, obj_func in [("nse", obj_nse), ("mse", obj_mse)]:
+    res, candidates = multistart_fit(obj_func, label.upper())
+    save_result(res, candidates, label)

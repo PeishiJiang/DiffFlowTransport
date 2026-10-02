@@ -35,12 +35,10 @@ def compute_metrics(
     rse = func_rse(pred, true)
     mare = he.evaluator(he.mare, pred, true)[0]
     rmse = he.evaluator(he.rmse, pred, true)[0]
-    kge = he.evaluator(he.kge, pred, true)[0][0]
-    mkge_all = he.evaluator(he.kgeprime, pred, true).flatten()
-    mkge = mkge_all[0]
-    cc = mkge_all[1]
-    beta = mkge_all[2]
-    alpha = mkge_all[3]
+    # KGE and its components follow Gupta et al. (2009): alpha is the variability
+    # ratio sigma(sim)/sigma(obs) and beta the bias ratio mu(sim)/mu(obs).
+    kge, cc, alpha, beta = he.evaluator(he.kge, pred, true).flatten()
+    mkge = he.evaluator(he.kgeprime, pred, true).flatten()[0]
     nse = he.evaluator(he.nse, pred, true)[0]
     try:
         r2 = r2_score(pred, true)

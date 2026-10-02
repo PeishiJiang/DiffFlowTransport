@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 
 import pandas as pd
+import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.gridspec as gridspec
@@ -2705,3 +2706,237 @@ def plot_ttd_and_PQST_4col(
  
 #     fig.suptitle(suptitle, fontsize=12, y=1.01)
 #     return fig
+
+def plot_performance_traintest(
+    df_metrics, mdn_types, gamma_label, metrics=("nse", "mse", "cc"),
+    palette=("lightsteelblue", "tab:blue"), suptitle="", show_legend=True,
+    figsize=(15, 5), font_times=True,
+):
+    """Boxplots of train/test performance per MDN configuration, with the
+    Gamma-dynamic benchmark's train (dotted) and test (dashed) values as
+    horizontal reference lines. `df_metrics` must have columns
+    ["model_type", "train_or_test", *metrics].
+    """
+    rc = {"font.family": "serif", "font.serif": ["Times New Roman", "Liberation Serif", "Nimbus Roman", "serif"],
+          "font.size": 16} if font_times else {}
+    with plt.rc_context(rc):
+        # Disable constrained layout so that subplots_adjust below takes effect.
+        fig, axes = plt.subplots(1, len(metrics), figsize=figsize, constrained_layout=False)
+        has_gamma = _performance_boxplot_row(axes, df_metrics, mdn_types, gamma_label, metrics, palette)
+
+        if show_legend:
+            handles, labels = _performance_legend_entries(gamma_label, palette, has_gamma)
+            plt.subplots_adjust(wspace=0.35, top=0.72)
+            fig.legend(handles, labels, ncols=len(handles), frameon=False,
+                       loc="lower center", bbox_to_anchor=(0.5, 0.78))
+        else:
+            plt.subplots_adjust(wspace=0.35)
+        if suptitle:
+            plt.suptitle(suptitle, y=0.98 if show_legend else None)
+    return fig, axes
+
+
+def _performance_boxplot_row(axes, df_metrics, mdn_types, gamma_label, metrics, palette):
+    has_gamma = False
+    for ax, metric in zip(axes, metrics):
+        sub = df_metrics[df_metrics["model_type"].isin(mdn_types)]
+        sns.boxplot(sub, ax=ax, x="model_type", y=metric, hue="train_or_test",
+                    order=mdn_types, hue_order=["train", "test"],
+                    palette=list(palette), legend=False)
+        gamma_train = df_metrics[(df_metrics["model_type"] == gamma_label) & (df_metrics["train_or_test"] == "train")]
+        gamma_test = df_metrics[(df_metrics["model_type"] == gamma_label) & (df_metrics["train_or_test"] == "test")]
+        if len(gamma_train):
+            ax.axhline(gamma_train[metric].values[0], color="dimgray", linestyle=":", linewidth=1.4)
+        if len(gamma_test):
+            ax.axhline(gamma_test[metric].values[0], color="k", linestyle="--", linewidth=1.4)
+        has_gamma = has_gamma or bool(len(gamma_train) or len(gamma_test))
+        ax.set(xlabel="", ylabel=f"${metric.upper()}$", ylim=[0, 1] if metric in ("nse", "cc") else None)
+        ax.set_xticks(ax.get_xticks())
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=15)
+    return has_gamma
+
+
+def _performance_legend_entries(gamma_label, palette, has_gamma):
+    handles = [mpl.patches.Patch(facecolor=palette[0]), mpl.patches.Patch(facecolor=palette[1])]
+    labels = ["train", "test"]
+    if has_gamma:
+        handles += [Line2D([0], [0], color="dimgray", linestyle=":", linewidth=1.4),
+                    Line2D([0], [0], color="k", linestyle="--", linewidth=1.4)]
+        labels += [f"{gamma_label} (train)", f"{gamma_label} (test)"]
+    return handles, labels
+
+
+def plot_performance_traintest_sites(
+    df_metrics_by_site, mdn_types, gamma_label, metrics=("nse", "mse", "cc"),
+    palette=("lightsteelblue", "tab:blue"), figsize=(15, 10), font_times=True,
+):
+    """Two-site version of `plot_performance_traintest` drawn as one figure
+    (rows = sites, labeled (a), (b), ...), so every row's axes are the same size,
+    with a single legend below the last row.
+
+    Args:
+        df_metrics_by_site: dict {site title: df_metrics}, in row order.
+    """
+    rc = {"font.family": "serif", "font.serif": ["Times New Roman", "Liberation Serif", "Nimbus Roman", "serif"],
+          "font.size": 16} if font_times else {}
+    n_rows = len(df_metrics_by_site)
+    with plt.rc_context(rc):
+        fig, axes = plt.subplots(n_rows, len(metrics), figsize=figsize, constrained_layout=False, squeeze=False)
+        has_gamma = False
+        for row, (site, df_metrics) in enumerate(df_metrics_by_site.items()):
+            has_gamma |= _performance_boxplot_row(axes[row], df_metrics, mdn_types, gamma_label, metrics, palette)
+            axes[row, len(metrics) // 2].set_title(site, pad=12)
+            axes[row, 0].text(-0.28, 1.08, f"({chr(97 + row)})", transform=axes[row, 0].transAxes,
+                              fontweight="bold", fontsize=18, ha="left", va="bottom")
+        plt.subplots_adjust(wspace=0.35, hspace=0.55, bottom=0.14, top=0.94)
+        handles, labels = _performance_legend_entries(gamma_label, palette, has_gamma)
+        fig.legend(handles, labels, ncols=len(handles), frameon=False,
+                   loc="upper center", bbox_to_anchor=(0.5, 0.04))
+    return fig, axes
+
+
+def plot_performance_obs_op(
+    df_metrics_by_site, model_types, metrics=("nse", "mse", "cc"), train_or_test="test",
+    ylims=None, varns=("C_Q", "C_{Qb}"), varn_labels=("$C_Q$", "$C_Q$ (op)"),
+    palette=("tab:blue", "tab:orange"), font_times=True,
+):
+    """Per-configuration performance with observed Q and operational-mode
+    (LSTM-predicted Q) runs side by side, for one period. One row per site, with a
+    single legend below the last row. KGE components follow Gupta et al. (2009):
+    alpha = variability ratio, beta = bias ratio.
+
+    Args:
+        df_metrics_by_site: dict {site title: df_metrics}, in row order; df_metrics
+            has columns ["model_type", "varn", "train_or_test", "with-sm", *metrics].
+        model_types: x-axis order, e.g. the MDN types followed by the benchmark.
+    """
+    rc = {"font.family": "serif", "font.serif": ["Times New Roman", "Liberation Serif", "Nimbus Roman", "serif"],
+          "font.size": 16} if font_times else {}
+    ylabels = {"kge": "$KGE$", "alpha": r"$\alpha$ (variability)", "beta": r"$\beta$ (bias)",
+               "nse": "$NSE$", "mse": "$MSE$", "cc": "$CC$"}
+    ylims = {"kge": (-1, 1), "nse": (-1, 1), "cc": (0, 1), **(ylims or {})}
+    n_rows = len(df_metrics_by_site)
+    with plt.rc_context(rc):
+        fig, axes = plt.subplots(n_rows, len(metrics), figsize=(5 * len(metrics), 5 * n_rows),
+                                 constrained_layout=False, squeeze=False)
+        for row, (site, df_metrics) in enumerate(df_metrics_by_site.items()):
+            sub = df_metrics[(df_metrics["train_or_test"] == train_or_test) & (df_metrics["varn"].isin(varns))
+                             & (df_metrics["with-sm"]) & (df_metrics["model_type"].isin(model_types))]
+            for ax, metric in zip(axes[row], metrics):
+                sns.boxplot(sub, ax=ax, x="model_type", y=metric, hue="varn", order=list(model_types),
+                            hue_order=list(varns), palette=list(palette), legend=False)
+                ax.set(xlabel="", ylabel=ylabels.get(metric, metric), ylim=ylims.get(metric))
+                ax.set_xticks(ax.get_xticks())
+                ax.set_xticklabels(ax.get_xticklabels(), rotation=35, ha="right", rotation_mode="anchor")
+            if n_rows > 1:
+                axes[row, 0].text(-0.3, 1.08, f"({chr(97 + row)})", transform=axes[row, 0].transAxes,
+                                  fontweight="bold", fontsize=18, ha="left", va="bottom")
+        plt.subplots_adjust(wspace=0.35, hspace=0.55, bottom=0.18 if n_rows == 1 else 0.14)
+        for row, site in enumerate(df_metrics_by_site):
+            left, right = axes[row, 0].get_position(), axes[row, -1].get_position()
+            fig.text((left.x0 + right.x1) / 2, left.y1 + 0.02, site, ha="center", va="bottom")
+        handles = [mpl.patches.Patch(facecolor=c) for c in palette]
+        fig.legend(handles, list(varn_labels), ncols=len(varns), frameon=False,
+                   loc="upper center", bbox_to_anchor=(0.5, 0.04 if n_rows > 1 else 0.02))
+    return fig, axes
+
+
+def plot_timeseries_best_traintest(
+    df_metrics, df_set, model_labels, mdn_types, gamma_label,
+    test_s, test_e, lim, units,
+    label_obs="Observation", label_sim="DiffSAS", font_times=True,
+):
+    """Best-member (per configuration, selected by minimum test-period MSE)
+    time series vs. 1:1 scatter, one row per configuration plus the
+    Gamma-dynamic benchmark.
+    """
+    rc ={"font.family": "serif", "font.serif": ["Times New Roman", "Liberation Serif", "Nimbus Roman", "serif"],
+          "font.size": 16} if font_times else {}
+    model_type_set = list(mdn_types) + [gamma_label]
+    with plt.rc_context(rc):
+        fig = plt.figure(figsize=(11, 11))
+        gs = fig.add_gridspec(len(model_type_set), 2, width_ratios=(3, 1), left=0.12, right=0.88,
+                               bottom=0.08, top=0.94, wspace=0.05, hspace=0.15)
+        for i, model_type in enumerate(model_type_set):
+            sub = df_metrics[(df_metrics["model_type"] == model_type) & (df_metrics["varn"] == "C_Q")
+                             & (df_metrics["train_or_test"] == "test")]
+            best_model = sub.loc[sub["mse"].idxmin(), "model"]
+            ind = model_labels.index(best_model)
+            df = df_set[ind]
+
+            ax1 = fig.add_subplot(gs[i, 0])
+            ax2 = fig.add_subplot(gs[i, 1], sharey=ax1)
+            ax1, ax2 = plot_timeseries_obs_1to1(
+                obs=df[test_s:test_e]["C_Q"].values, sim=df[test_s:test_e]["C_Q_sim"].values, lim=lim,
+                timesteps=df[test_s:test_e].index, units=units, varn=model_type,
+                label_sim=label_sim, label_obs=label_obs, axes=[ax1, ax2], legend=False,
+            )
+            if i != len(model_type_set) - 1:
+                ax1.set(xticks=[])
+                ax2.set(xticks=[], xlabel=None)
+    return fig
+
+
+def plot_mdn_params_ensemble(
+    time, gamma_set, scale_set, loc_set=None, label="",
+    comp_labels=(r"$S_{0,\mathcal{N}}$", r"$S_{0,\mathcal{U}}$", r"$S_{0,\Gamma}$"),
+    loc_labels=(r"$S_{min,\mathcal{N}}$", r"$S_{min,\mathcal{U}}$", r"$S_{min,\Gamma}$"),
+    colors=("violet", "silver", "dimgray"), axes=None,
+    ylabel_fontsize=20, tick_fontsize=16, legend_fontsize=16,
+):
+    """Ensemble mean +/- 1 SD of the MDN's Gamma shape (gamma_set), the three
+    component scales (scale_set), and -- if given -- the three component
+    locations (loc_set). Diverged members (NaN) are excluded via
+    np.nanmean/np.nanstd.
+
+    Args:
+        time: array of length nt.
+        gamma_set: array (n_members, nt) -- Gamma shape parameter.
+        scale_set: array (n_members, nt, 3) -- component scales, ordered to
+            match `comp_labels` / `colors` (Normal, Uniform, Gamma by default).
+        loc_set: optional array (n_members, nt, 3) -- component locations,
+            same ordering. If given, a third panel is drawn/expected in `axes`.
+        axes: optional [ax_gamma, ax_scale] or [ax_gamma, ax_scale, ax_loc]
+            (the latter required if loc_set is given) to draw into.
+    """
+    gamma_set = np.asarray(gamma_set)
+    scale_set = np.asarray(scale_set)
+
+    n_axes = 3 if loc_set is not None else 2
+    if axes is None:
+        fig, axes = plt.subplots(1, n_axes, figsize=(7 * n_axes, 3.5))
+    ax_g, ax_s = axes[0], axes[1]
+
+    g_mean = np.nanmean(gamma_set, axis=0)
+    g_std = np.nanstd(gamma_set, axis=0)
+    ax_g.plot(time, g_mean, color="k", alpha=0.8)
+    ax_g.fill_between(time, g_mean - g_std, g_mean + g_std, color="k", alpha=0.3)
+    ax_g.set_ylabel(f"$\\gamma$ ({label})" if label else "$\\gamma$", fontsize=ylabel_fontsize)
+
+    for j, clabel in enumerate(comp_labels):
+        s_mean = np.nanmean(scale_set[..., j], axis=0)
+        s_std = np.nanstd(scale_set[..., j], axis=0)
+        ax_s.plot(time, s_mean, color=colors[j], alpha=0.8, label=clabel)
+        ax_s.fill_between(time, s_mean - s_std, s_mean + s_std, color=colors[j], alpha=0.3)
+    ax_s.set_ylabel(f"Scale ({label})" if label else "Scale", fontsize=ylabel_fontsize)
+
+    if loc_set is not None:
+        loc_set = np.asarray(loc_set)
+        ax_l = axes[2]
+        for j, clabel in enumerate(loc_labels):
+            l_mean = np.nanmean(loc_set[..., j], axis=0)
+            l_std = np.nanstd(loc_set[..., j], axis=0)
+            ax_l.plot(time, l_mean, color=colors[j], alpha=0.8, label=clabel)
+            ax_l.fill_between(time, l_mean - l_std, l_mean + l_std, color=colors[j], alpha=0.3)
+        ax_l.set_ylabel(f"Location ({label})" if label else "Location", fontsize=ylabel_fontsize)
+
+    for ax in axes:
+        ax.tick_params(axis="both", labelsize=tick_fontsize)
+    if legend_fontsize is not None:
+        for ax in axes[1:]:
+            leg = ax.get_legend()
+            if leg is not None:
+                for t in leg.get_texts():
+                    t.set_fontsize(legend_fontsize)
+
+    return axes

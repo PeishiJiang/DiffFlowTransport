@@ -3,6 +3,7 @@ from pathlib import Path
 
 import json
 import pickle
+import numpy as np
 import pandas as pd
 
 from sklearn.preprocessing import StandardScaler
@@ -15,10 +16,11 @@ import jax.tree_util as jtu
 # Force JAX to use CPU
 jax.config.update("jax_platform_name", "cpu")
 
-from DiffFlowTransport.sas import SAS_Uniform, SAS_Gamma_StorageDependent
+from DiffFlowTransport.sas import SAS_Uniform, SAS_Gamma_StorageDependent, get_sas_inputs
 from DiffFlowTransport.transport import SASTransport
 from DiffFlowTransport.utils import get_transport_obs_fluxes
 from DiffFlowTransport.utils.plot import plot_timeseries_obs_1to1, plot_PQET_quantile, plot_2timeseries_obs_1to1
+from DiffFlowTransport.utils.plot import plot_performance_traintest, plot_timeseries_best_traintest, plot_mdn_params_ensemble, plot_performance_obs_op
 # from DiffFlowTransport.utils.plot import plot_PQET_ST, plot_PQET_ST2, plot_young_water
 # from DiffFlowTransport.utils.plot import plot_mdn_weights, plot_mdn_weights_with_ω
 # from DiffFlowTransport.utils.plot import plot_young_water_withQ, plot_PQET_ST_esspi, plot_PQET_ST_noselect
@@ -335,9 +337,50 @@ for i,model_name in enumerate(model_names):
         df_metrics.loc[i*6+5] = [
             model_label, model_type, with_sm, is_gaussian, mdn, lstm_hid, 'C_{Qb}', 'test', metrics2['rse'], metrics2['mare'], metrics2['rmse'],
             metrics2['mse'], metrics2['r2'], metrics2['kge'], metrics2['nse'], 
-            metrics2['mkge'], metrics2['cc'], metrics2['alpha'], metrics2['beta'], 
+            metrics2['mkge'], metrics2['cc'], metrics2['alpha'], metrics2['beta'],
         ]
 
+df_metrics.to_csv("./figs/df_metrics.csv", index=False)
+print("Wrote ./figs/df_metrics.csv")
+
+
+# %%
+# Train/test performance boxplots of each MDN configuration, with the storage-dependent
+# Gamma benchmark shown as reference lines. Diverged members (NaN metrics) are dropped.
+mdn_types = ['MDN$_{\\text{LSTM}}$', 'MDN$_{Q}$', 'MDN$_{Q,\\text{LSTM}}$']
+gamma_label = '$\\Gamma_\\text{dynamic}$'
+df_metrics_renamed = df_metrics.rename(columns={"model-type": "model_type"})
+
+for varn, fname in [("C_Q", "Fig-performances.png")]:
+    sub = df_metrics_renamed[(df_metrics_renamed["varn"] == varn) & (df_metrics_renamed["with-sm"])]
+    fig, axes = plot_performance_traintest(
+        sub, mdn_types, gamma_label, suptitle="Lower Hafren Watershed",
+    )
+    plt.savefig(f"./figs/{fname}", dpi=150, bbox_inches="tight")
+    print(f"Wrote ./figs/{fname}")
+
+
+# %%
+# Test-period NSE, MSE and CC using observed Q versus LSTM-predicted Q (operational mode).
+fig, axes = plot_performance_obs_op(
+    {"Lower Hafren Watershed": df_metrics_renamed}, mdn_types + [gamma_label], ylims={"nse": (-0.6, 1)},
+)
+plt.savefig("./figs/Fig-performances-op.png", dpi=150, bbox_inches="tight")
+print("Wrote ./figs/Fig-performances-op.png")
+
+
+# %%
+# Test-period KGE and its components (alpha = variability ratio, beta = bias ratio, CC)
+# using observed Q versus LSTM-predicted Q (operational mode).
+fig, axes = plot_performance_obs_op(
+    {"Lower Hafren Watershed": df_metrics_renamed}, mdn_types + [gamma_label], metrics=("kge", "alpha", "beta", "cc"),
+)
+plt.savefig("./figs/Fig-performances-kge.png", dpi=150, bbox_inches="tight")
+print("Wrote ./figs/Fig-performances-kge.png")
+
+
+# %%
+# Additional ensemble-performance diagnostic plots.
 
 # %%
 train_or_test, metrics = "test", ['nse', 'mse', 'cc']
@@ -425,31 +468,6 @@ plt.savefig('./figs/performances2.png', dpi=150, bbox_inches="tight")
 
 # %%
 # Plot the histogram ...
-train_or_test, metrics = "test", ['kge', 'alpha', 'beta', 'cc']
-varns = ["C_Q", "C_{Qb}"]
-varn_labels = ["$C_Q$", "$C_{Q}$ (op)"]
-fig, axes = plt.subplots(1, len(metrics), figsize=(16, 4))
-for j, metric in enumerate(metrics):
-    ax = axes[j]
-    df_metrics_sub = df_metrics[
-        (df_metrics['train_or_test']==train_or_test) & (df_metrics['varn'].isin(varns)) & (df_metrics["with-sm"])
-    ]
-    ax = sns.boxplot(df_metrics_sub, ax=ax, x="model-type", y=metric, hue="varn",
-                     palette=["tab:blue", "tab:orange"], legend=False)
-    ax.set(xlabel="", ylabel = f"${metric.upper()}$",
-           yscale="linear", ylim=[-1, 1] if metric=="kge" else [0,1] if metric=="cc" else None)
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=20)
-    # if j==len(metrics)-1:
-    #     handles, labels = ax.get_legend_handles_labels()
-    #     labels = [varn_labels[i] for i,l in enumerate(labels)]
-    #     ax.legend(handles, labels, ncols=2, frameon=False, bbox_to_anchor=(-0.5, -0.15), title="")
-plt.subplots_adjust(wspace=0.35, hspace=0.25);
-plt.suptitle('Lower Hafren Watershed');
-plt.savefig('./figs/performances2-kge.png', dpi=150, bbox_inches="tight")
-
-
-# %%
-# Plot the histogram ...
 train_or_test, metrics = "test", ['nse', 'mse', 'cc']
 varn, varn_label = "C_Q", "$C_Q$"
 fig, axes = plt.subplots(1, len(metrics), figsize=(12, 4))
@@ -500,87 +518,105 @@ plt.savefig('./figs/performances4.png', dpi=150, bbox_inches="tight")
 # # Time series prediction
 
 # %%
-# Time series of the best CQ
-fig = plt.figure(figsize=(10, 10))
-gs = fig.add_gridspec(
-    4, 2, width_ratios=(3, 1), left=0.1, right=0.9,
-    bottom=0.1, top=0.9, wspace=0.05, hspace=0.1,
+# Time series of the best member (lowest test-period MSE) of each configuration and the
+# Gamma benchmark.
+fig = plot_timeseries_best_traintest(
+    df_metrics_renamed, df_set, model_labels, mdn_types, gamma_label,
+    test_s, test_e, lim=[4, 15], units='Cl \n [mg l$^{-1}$]',
 )
-model_type_set = ['MDN$_{\\text{LSTM}}$', 'MDN$_{Q}$', 'MDN$_{Q,\\text{LSTM}}$', '$\\Gamma_\\text{dynamic}$']
-for i,model_type in enumerate(model_type_set):
-    df_metrics_sub = df_metrics[(df_metrics['model-type']==model_type) & (df_metrics['varn']=='C_Q')]
-    best_model = df_metrics_sub.iloc[df_metrics_sub['mse'].argmin()]['model']
-    ind = model_labels.index(best_model)
-    
-    if model_label == '$\\Gamma_\\text{dynamic}$':
-        df = df_set[ind]
-    else:
-        configs, df = configs_set[ind], df_set[ind]
-    sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[ind]
-    test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
-    dt = configs['transport_configs']['transport_specs']['dt']
-
-    # Plot
-    ax1 = fig.add_subplot(gs[i,0])
-    ax2 = fig.add_subplot(gs[i,1], sharey=ax1)
-    ax1, ax2 = plot_timeseries_obs_1to1(
-        obs=df[test_s:test_e]['C_Q'].values, sim=df[test_s:test_e]['C_Q_sim'].values, lim=[4,15], 
-        timesteps=df[test_s:test_e].index, units='Cl \n [mg l$^{-1}$]', varn=model_type, 
-        label_sim='DiffSAS', axes=[ax1, ax2], legend=False, figsize=(12, 3)
-        # label_sim='DiffSAS', figsize=(10,2)
-    );
-    if i != len(model_type_set)-1:
-        ax1.set(xticks=[])
-        ax2.set(xticks=[], xlabel=None)
-plt.savefig(f'./figs/timeseries-best.png', dpi=150)
-
+plt.savefig('./figs/Fig-timeseries-best.png', dpi=150, bbox_inches="tight")
+print("Wrote ./figs/Fig-timeseries-best.png")
 
 # %%
-# Time series of the best CQ (op)
-fig = plt.figure(figsize=(10, 12))
+# Operational-mode time series (LSTM-predicted Q drives the transport model); the best
+# member per configuration has the lowest test-period MSE of C_{Qb}.
+df_metrics_op = df_metrics_renamed[
+    (df_metrics_renamed["varn"] == "C_{Qb}") & (df_metrics_renamed["train_or_test"] == "test")
+]
+best_op_models = {
+    model_type: df_metrics_op.loc[df_metrics_op[df_metrics_op["model_type"] == model_type]["mse"].idxmin(), "model"]
+    for model_type in mdn_types + [gamma_label]
+}
+fig = plt.figure(figsize=(11, 12))
 gs = fig.add_gridspec(
-    5, 2, width_ratios=(3, 1), left=0.1, right=0.9,
-    bottom=0.1, top=0.9, wspace=0.05, hspace=0.1,
+    len(mdn_types) + 2, 2, width_ratios=(3, 1), left=0.12, right=0.88,
+    bottom=0.08, top=0.94, wspace=0.05, hspace=0.15,
 )
-model_type_set = ['MDN$_{\\text{LSTM}}$', 'MDN$_{Q}$', 'MDN$_{Q,\\text{LSTM}}$', '$\\Gamma_\\text{dynamic}$']
-for i,model_type in enumerate(model_type_set):
-    df_metrics_sub = df_metrics[(df_metrics['model-type']==model_type) & (df_metrics['varn']=='C_{Qb}')]
-    best_model = df_metrics_sub.iloc[df_metrics_sub['mse'].argmin()]['model']
-    ind = model_labels.index(best_model)
-    
-    if model_label == '$\\Gamma_\\text{dynamic}$':
-        df = df_set[ind]
-    else:
-        configs, df = configs_set[ind], df_set[ind]
-    sT, mT, mQETs, pQETs, mRs, C_Q = transport_output_set[ind]
-    test_s, test_e = configs['train_configs']['test_start'], configs['train_configs']['test_end']
-    dt = configs['transport_configs']['transport_specs']['dt']
-
-    # Plot
-    # Flow
-    if i == 0:
-        ax1 = fig.add_subplot(gs[0,0])
-        ax2 = fig.add_subplot(gs[0,1], sharey=ax1)
-        plot_timeseries_obs_1to1(
-            obs=df[test_s:test_e]['Q'].values, sim=df[test_s:test_e]['Q_simb'].values, lim=[0,110], timesteps=df[test_s:test_e].index,
-            units='$Q$ [mm d$^{-1}$]', varn='Streamflow', label_sim='LSTM', axes=[ax1, ax2], legend=False, figsize=(12, 3)
-        );
-        ax1.set(xticks=[])
-        ax2.set(xticks=[], xlabel=None)
-    # Transport
-    ax1 = fig.add_subplot(gs[i+1,0])
-    ax2 = fig.add_subplot(gs[i+1,1], sharey=ax1)
+# Row 0: LSTM-predicted streamflow of the first configuration's selected member
+ind0 = model_labels.index(best_op_models[mdn_types[0]])
+df0 = df_set[ind0]
+ax1 = fig.add_subplot(gs[0, 0])
+ax2 = fig.add_subplot(gs[0, 1], sharey=ax1)
+plot_timeseries_obs_1to1(
+    obs=df0[test_s:test_e]['Q'].values, sim=df0[test_s:test_e]['Q_simb'].values, lim=[0, 110],
+    timesteps=df0[test_s:test_e].index, units='$Q$ [mm d$^{-1}$]', varn='Streamflow',
+    label_sim='LSTM', axes=[ax1, ax2], legend=False,
+)
+ax1.set(xticks=[])
+ax2.set(xticks=[], xlabel=None)
+# Remaining rows: transport in operational mode, one per configuration + benchmark
+for i, model_type in enumerate(mdn_types + [gamma_label]):
+    ind = model_labels.index(best_op_models[model_type])
+    df = df_set[ind]
+    ax1 = fig.add_subplot(gs[i + 1, 0])
+    ax2 = fig.add_subplot(gs[i + 1, 1], sharey=ax1)
     ax1, ax2 = plot_timeseries_obs_1to1(
-        obs=df[test_s:test_e]['C_Q'].values, sim=df[test_s:test_e]['C_Q_simb'].values, lim=[4,15], 
-        timesteps=df[test_s:test_e].index, units='Cl \n [mg l$^{-1}$]', varn=model_type + " (operational mode)", 
-        label_sim='DiffSAS', axes=[ax1, ax2], legend=False, figsize=(12, 3)
-        # label_sim='DiffSAS', figsize=(10,2)
-    );
-    if i != len(model_type_set)-1:
+        obs=df[test_s:test_e]['C_Q'].values, sim=df[test_s:test_e]['C_Q_simb'].values, lim=[4, 15],
+        timesteps=df[test_s:test_e].index, units='Cl \n [mg l$^{-1}$]', varn=model_type + " (operational mode)",
+        label_sim='DiffSAS', axes=[ax1, ax2], legend=False,
+    )
+    if i != len(mdn_types):
         ax1.set(xticks=[])
         ax2.set(xticks=[], xlabel=None)
-plt.savefig(f'./figs/timeseries-best-op.png', dpi=150)
+plt.savefig('./figs/Fig-timeseries-best-op.png', dpi=150, bbox_inches="tight")
+print("Wrote ./figs/Fig-timeseries-best-op.png")
 
+
+# %% [markdown]
+# # MDN component parameters: Gamma shape, and location and scale of each component
+
+# %%
+# Forward pass of the MDN network only (get_sas_inputs + vmap(sas_Q.get_param)) on the
+# loaded models, over the test period. Diverged members give NaN and are dropped.
+mdn_type_ctype = {'MDN$_{\\text{LSTM}}$': 1, 'MDN$_{Q}$': 3, 'MDN$_{Q,\\text{LSTM}}$': 4}
+
+fig, axes = plt.subplots(len(mdn_type_ctype), 3, figsize=(20, 10), sharex=True)
+for row, (mtype, ctype) in enumerate(mdn_type_ctype.items()):
+    gammas, scales, locs, time_ref = [], [], [], None
+    for i, model_name in enumerate(model_names):
+        if model_labels[i].split('-')[0] != mtype:
+            continue
+        model = model_set[i]
+        J, Q, ET, C_J, C_Q, time = transport_data_set[i]
+        test_s_ind, test_e_ind = time.get_loc(test_s), time.get_loc(test_e)
+        if time_ref is None:
+            time_ref = time[test_s_ind:test_e_ind]
+        sas_Q_args, sas_ET_args = get_sas_inputs(
+            ctype, Q, ET, model.flow_model, flow_dl_set[i], model.logQminmax, model.ETminmax
+        )
+        alpha, gamma_shape, loc, scale = jax.vmap(model.transport_model.sas_Q.get_param)(sas_Q_args)
+        gammas.append(np.asarray(gamma_shape)[test_s_ind:test_e_ind])
+        scales.append(np.asarray(scale)[test_s_ind:test_e_ind])
+        locs.append(np.asarray(loc)[test_s_ind:test_e_ind])
+    plot_mdn_params_ensemble(time_ref, gammas, scales, loc_set=locs, label=mtype, axes=axes[row, :],
+                              ylabel_fontsize=22, tick_fontsize=18)
+    if row == 0:
+        axes[row, 1].legend(ncols=3, frameon=False, loc="upper right", fontsize=16)
+        axes[row, 2].legend(ncols=3, frameon=False, loc="upper right", fontsize=16)
+for ax in axes[-1, :]:
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=20, ha="center")
+
+# Same y-axis range within each column (variable) across the three MDN-type rows.
+for col in range(axes.shape[1]):
+    y_lo = min(axes[r, col].get_ylim()[0] for r in range(axes.shape[0]))
+    y_hi = max(axes[r, col].get_ylim()[1] for r in range(axes.shape[0]))
+    for r in range(axes.shape[0]):
+        axes[r, col].set_ylim(y_lo, y_hi)
+
+plt.suptitle("Lower Hafren: MDN component parameters, test period (ensemble mean $\\pm$ 1 SD)", fontsize=26)
+plt.tight_layout()
+plt.savefig('./figs/Fig-mdn-params.png', dpi=150, bbox_inches="tight")
+print("Wrote ./figs/Fig-mdn-params.png")
 
 # %% [markdown]
 # # Intercomparison between Gamma and MDN

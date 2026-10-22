@@ -89,7 +89,7 @@ python Postprocess-UQ.py
 ```
 This writes the per-site figures and the performance metrics of all members (`figs/df_metrics.csv`) to `figs/`.
 
-- **Step 4:** From the repo root, assemble the two-watershed figures in `paper/FiguresR2/`:
+- **(Optional) Step 4:** From the repo root, assemble the two-watershed figures in `paper/FiguresR2/` (one needs to create such folder first):
 ```sh
 python make_combined_figures.py
 ```
